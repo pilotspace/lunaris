@@ -60,13 +60,22 @@ const SLACK_ARCHIVE_PREFIX: &str = "slack:archive/";
 pub struct SlackArchive {
     inner_ms: MessageStream,
     lunaris: Arc<Lunaris>,
+    /// W4.17 — the narrowed `.channel()` / `.user()` builders below run their
+    /// OWN `lunaris.recall()` rather than going through `inner_ms`, so they
+    /// need the partition key too. Without it a channel-narrowed recall
+    /// answered from every scope in the store.
+    scope: Scope,
 }
 
 impl SlackArchive {
     /// Construct a root archive handle. `MessageStream` is scoped at
     /// `SLACK_ARCHIVE_PREFIX` (private).
     pub fn new(lunaris: Arc<Lunaris>, scope: Scope) -> Self {
-        Self { inner_ms: MessageStream::new(lunaris.clone(), scope, SLACK_ARCHIVE_PREFIX), lunaris }
+        Self {
+            inner_ms: MessageStream::new(lunaris.clone(), scope.clone(), SLACK_ARCHIVE_PREFIX),
+            lunaris,
+            scope,
+        }
     }
 
     /// Ingest one message into `channel` authored by `participant_id`.
@@ -95,6 +104,7 @@ impl SlackArchive {
     pub fn channel(&self, id: impl Into<String>) -> SlackArchiveQuery {
         SlackArchiveQuery {
             lunaris: self.lunaris.clone(),
+            scope: self.scope.clone(),
             channel: Some(id.into()),
             participant_id: None,
         }
@@ -106,6 +116,7 @@ impl SlackArchive {
     pub fn user(&self, id: impl Into<String>) -> SlackArchiveQuery {
         SlackArchiveQuery {
             lunaris: self.lunaris.clone(),
+            scope: self.scope.clone(),
             channel: None,
             participant_id: Some(id.into()),
         }
@@ -121,6 +132,7 @@ impl SlackArchive {
 #[derive(Clone)]
 pub struct SlackArchiveQuery {
     lunaris: Arc<Lunaris>,
+    scope: Scope,
     channel: Option<String>,
     participant_id: Option<String>,
 }
@@ -143,7 +155,12 @@ impl SlackArchiveQuery {
         use lunaris_retrieve::{Keyword, Query, Vector};
         let filter = build_filter(self);
         let plan = Vector::new("chunks", 24).and(Keyword::bm25("chunks", 24)).fuse_rrf(60).top(8);
-        self.lunaris.recall().with_root(plan).filter(filter).execute(Query::text(query)).await
+        self.lunaris
+            .recall()
+            .with_root(plan)
+            .filter(filter)
+            .execute(Query::text(query))
+            .await
     }
 }
 

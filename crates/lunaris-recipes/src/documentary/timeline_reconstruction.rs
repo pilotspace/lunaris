@@ -35,6 +35,12 @@ use crate::{DocumentCorpus, Documents, TemporalQuery};
 pub struct TimelineReconstruction {
     lunaris: Arc<Lunaris>,
     corpus: DocumentCorpus,
+    /// W4.17 — same reason as `source_prefix` below: the temporal read path
+    /// cannot reach the corpus's copy, and until W4.17 it carried NO scope, so
+    /// `between` / `as_of` read across every partition in the store. The
+    /// `source_prefix` post-filter hid that while every caller sat in
+    /// `Scope::dev()`.
+    scope: Scope,
     /// Kept alongside the corpus because the temporal read path cannot reach
     /// the corpus's own copy. See [`TimelineReconstruction::scoped`].
     source_prefix: String,
@@ -44,8 +50,8 @@ impl TimelineReconstruction {
     /// Construct bound to `source_prefix` (e.g. `"timeline:events/"`).
     pub fn new(lunaris: Arc<Lunaris>, scope: Scope, source_prefix: impl Into<String>) -> Self {
         let source_prefix = source_prefix.into();
-        let corpus = DocumentCorpus::new(lunaris.clone(), scope, source_prefix.clone());
-        Self { lunaris, corpus, source_prefix }
+        let corpus = DocumentCorpus::new(lunaris.clone(), scope.clone(), source_prefix.clone());
+        Self { lunaris, corpus, scope, source_prefix }
     }
 
     /// Restrict hits to this timeline's own `source_prefix`.
@@ -78,7 +84,7 @@ impl TimelineReconstruction {
     /// Recall all events in `[lo, hi)` (lower inclusive, upper exclusive).
     /// 2 primitive calls: `TemporalQuery::<Documents>::new` + `.between().execute()`.
     pub async fn between(&self, query: &str, lo: Hlc, hi: Hlc) -> Result<Vec<Hit>, LunarisError> {
-        let hits = TemporalQuery::<Documents>::new(self.lunaris.clone())
+        let hits = TemporalQuery::<Documents>::new(self.lunaris.clone(), self.scope.clone())
             .between(lo, hi)
             .execute(query)
             .await?;
@@ -88,8 +94,10 @@ impl TimelineReconstruction {
     /// Recall the snapshot at `ts`. 2 primitive calls:
     /// `TemporalQuery::<Documents>::new` + `.as_of(ts).execute()`.
     pub async fn as_of(&self, query: &str, ts: Hlc) -> Result<Vec<Hit>, LunarisError> {
-        let hits =
-            TemporalQuery::<Documents>::new(self.lunaris.clone()).as_of(ts).execute(query).await?;
+        let hits = TemporalQuery::<Documents>::new(self.lunaris.clone(), self.scope.clone())
+            .as_of(ts)
+            .execute(query)
+            .await?;
         Ok(self.scoped(hits))
     }
 }

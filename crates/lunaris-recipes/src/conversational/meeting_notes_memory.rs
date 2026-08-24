@@ -37,6 +37,11 @@ pub struct MeetingNotesMemory {
     #[allow(dead_code)]
     inner_wm: WorkingMemory,
     lunaris: Arc<Lunaris>,
+    /// W4.17 — `.attendees()` returns a builder that runs its OWN
+    /// `lunaris.recall()` rather than going through `inner_ms`, so it needs
+    /// the partition key too. Without it an attendee-narrowed recall answered
+    /// from every scope in the store.
+    scope: Scope,
 }
 
 impl MeetingNotesMemory {
@@ -44,8 +49,9 @@ impl MeetingNotesMemory {
     pub fn new(lunaris: Arc<Lunaris>, scope: Scope) -> Self {
         Self {
             inner_ms: MessageStream::new(lunaris.clone(), scope.clone(), MEETING_PREFIX),
-            inner_wm: WorkingMemory::new(lunaris.clone(), scope, MEETING_PREFIX),
+            inner_wm: WorkingMemory::new(lunaris.clone(), scope.clone(), MEETING_PREFIX),
             lunaris,
+            scope,
         }
     }
 
@@ -78,7 +84,11 @@ impl MeetingNotesMemory {
     // semantics unchanged. All existing call sites pass owned `Vec<String>`
     // or `vec!["x".into(), ...]` literals which transparently coerce.
     pub fn attendees(&self, attendees: Vec<String>) -> MeetingNotesQuery {
-        MeetingNotesQuery { lunaris: self.lunaris.clone(), participants: attendees }
+        MeetingNotesQuery {
+            lunaris: self.lunaris.clone(),
+            scope: self.scope.clone(),
+            participants: attendees,
+        }
     }
 
     /// Opt-in the v0.1.0 graph pipeline (D-07). Blueprint §5.2
@@ -100,6 +110,7 @@ impl MeetingNotesMemory {
 #[derive(Clone)]
 pub struct MeetingNotesQuery {
     lunaris: Arc<Lunaris>,
+    scope: Scope,
     participants: Vec<String>,
 }
 
@@ -112,7 +123,12 @@ impl MeetingNotesQuery {
         use lunaris_retrieve::{Keyword, Query, Vector};
         let filter = build_attendees_filter(&self.participants);
         let plan = Vector::new("chunks", 24).and(Keyword::bm25("chunks", 24)).fuse_rrf(60).top(8);
-        self.lunaris.recall().with_root(plan).filter(filter).execute(Query::text(query)).await
+        self.lunaris
+            .recall()
+            .with_root(plan)
+            .filter(filter)
+            .execute(Query::text(query))
+            .await
     }
 }
 
