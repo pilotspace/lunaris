@@ -31,7 +31,13 @@ HOOK_BIN = ROOT / "target" / "release" / "lunaris-hook"
 CONTEXTD_BIN = ROOT / "target" / "release" / "lunaris-contextd"
 MOON_MANIFEST = ROOT / "vendor" / "moon" / "Cargo.toml"
 MOON_BIN = ROOT / "vendor" / "moon" / "target" / "release" / "moon"
-MOON_CURL_INSTALL = "curl -fsSL https://raw.githubusercontent.com/pilotspace/moon/main/install.sh | sh"
+MOON_CURL_INSTALL = "curl -fsSL https://raw.githubusercontent.com/pilotspace/lunaris/main/scripts/install-moon.sh | sh"
+# The same installer, as shipped in this checkout. Setup calls it directly
+# rather than telling the user to curl it: an agent-setup script that finds no
+# Moon and exits with a command to run is a dead end, and until 2026-08-25 the
+# command it printed could not even succeed (Moon's own installer resolves to
+# the latest tag, and v0.8.5/6/7 all publish zero assets).
+MOON_INSTALLER = ROOT / "scripts" / "install-moon.sh"
 DEFAULT_GGUF = Path.home() / ".lunaris" / "models" / "granite-embedding-311m-multilingual-r2.Q4_K_M.gguf"
 # 6381, NOT 6380: the Moon launchd agent listens on 6381; on the reference
 # box 6380 is an unrelated ai-proxy Redis that happily answers RESP PING, so
@@ -151,6 +157,17 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--install-moon",
+        choices=("auto", "never"),
+        default="auto",
+        help=(
+            "What to do when no Moon binary is found. 'auto' (default) runs "
+            "scripts/install-moon.sh, which reuses an existing Moon, else "
+            "downloads a release tarball, else builds from the public source "
+            "tag (several minutes). 'never' fails with instructions instead."
+        ),
+    )
+    parser.add_argument(
         "--scope",
         default=None,
         help="Optional fixed Lunaris scope name.",
@@ -201,12 +218,15 @@ def main() -> int:
         ensure_moon_prereqs(args)
     resolved_moon = resolve_moon_bin(args)
     if resolved_moon is None and not args.build_moon:
-        print(
-            "No Moon binary found (--moon-bin, PATH, ~/.local/bin/moon, vendored "
-            f"build). Lunaris is Moon-only — install Moon first:\n  {MOON_CURL_INSTALL}",
-            file=sys.stderr,
-        )
-        raise SystemExit(2)
+        if args.install_moon == "auto":
+            resolved_moon = install_moon(args)
+        if resolved_moon is None:
+            print(
+                "No Moon binary found (--moon-bin, PATH, ~/.local/bin/moon, vendored "
+                f"build). Lunaris is Moon-only — install Moon first:\n  {MOON_CURL_INSTALL}",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
     if args.hooks == "on":
         ensure_hook_prereqs(args)
 
@@ -231,6 +251,63 @@ def main() -> int:
     elif resolved_moon is not None:
         print(f"- Moon: using {resolved_moon}")
     return 0
+
+
+def install_moon(args: argparse.Namespace) -> Path | None:
+    """Install Moon via scripts/install-moon.sh, then re-resolve.
+
+    Lunaris is Moon-only, so "no Moon" is not a user error to report — it is a
+    prerequisite this script can satisfy. The heavy case (a source build) can
+    take several minutes, which is why it is announced rather than silent.
+
+    Returns the resolved binary, or None so the caller can print its own
+    guidance. Never raises: a failed install must fall through to the
+    instructions, not crash setup.
+    """
+    if not MOON_INSTALLER.exists():
+        print(f"Moon installer not found at {MOON_INSTALLER}", file=sys.stderr)
+        return None
+    if args.dry_run:
+        print(f"[dry-run] sh {MOON_INSTALLER}")
+        return None
+
+    print(
+        "No Moon binary found. Lunaris is Moon-only, so setup will install it "
+        "now.\n"
+        "  If no release tarball is available for this platform, Moon is built "
+        "from source and this takes several minutes.\n"
+        "  Skip with --install-moon never.",
+        file=sys.stderr,
+    )
+    try:
+        proc = subprocess.run(
+            ["sh", str(MOON_INSTALLER)],
+            cwd=ROOT,
+            check=False,
+        )
+    except OSError as exc:
+        print(f"could not run {MOON_INSTALLER}: {exc}", file=sys.stderr)
+        return None
+    if proc.returncode != 0:
+        print(
+            f"{MOON_INSTALLER.name} exited {proc.returncode}; see its output above.",
+            file=sys.stderr,
+        )
+        return None
+
+    # Re-resolve rather than trusting the installer's reported path: this
+    # confirms setup's OWN resolver can find what was just installed. If it
+    # cannot, the install landed somewhere setup does not look, and saying so
+    # here is far cheaper than a confusing failure three steps later.
+    found = resolve_moon_bin(args)
+    if found is None:
+        print(
+            f"{MOON_INSTALLER.name} reported success but setup still cannot find a "
+            "Moon binary on PATH, in ~/.local/bin, or at the vendored path. "
+            "Pass --moon-bin explicitly.",
+            file=sys.stderr,
+        )
+    return found
 
 
 def resolve_moon_bin(args: argparse.Namespace) -> Path | None:

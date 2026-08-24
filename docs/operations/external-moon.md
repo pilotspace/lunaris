@@ -43,11 +43,11 @@ Two supported shapes. Pick one.
 
 ```bash
 # latest release
-curl -fsSL https://raw.githubusercontent.com/pilotspace/moon/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/pilotspace/lunaris/main/scripts/install-moon.sh | sh
 
 # pinned (recommended for production)
-curl -fsSL https://raw.githubusercontent.com/pilotspace/moon/main/install.sh \
-  | VERSION=v0.8.5 INSTALL_DIR=/usr/local/bin sh
+curl -fsSL https://raw.githubusercontent.com/pilotspace/lunaris/main/scripts/install-moon.sh \
+  | MOON_VERSION=0.8.5 INSTALL_DIR=/usr/local/bin sh
 ```
 
 The URL, the `VERSION` / `INSTALL_DIR` overrides, and the checksum-verified
@@ -161,7 +161,7 @@ but this Lunaris build requires >= 0.8.5. Older Moon builds are missing command
 surface Lunaris depends on (FT.* vector/BM25 search, graph Cypher, TEMPORAL.*),
 which would otherwise surface later as an opaque `ERR unknown command` in the
 middle of a recall. To proceed: upgrade the server —
-`curl -fsSL https://raw.githubusercontent.com/pilotspace/moon/main/install.sh | VERSION=v0.8.5 sh`,
+`curl -fsSL https://raw.githubusercontent.com/pilotspace/lunaris/main/scripts/install-moon.sh | MOON_VERSION=0.8.5 sh`,
 or run the ghcr.io/pilotspace/moon image at a tag >= v0.8.5 — then reconnect.
 Confirm with `redis-cli -h <host> -p <port> INFO server | grep moon_version`.
 ```
@@ -173,8 +173,8 @@ Confirm with `redis-cli -h <host> -p <port> INFO server | grep moon_version`.
 redis-cli -h 127.0.0.1 -p 6379 INFO server | grep moon_version
 
 # 2. upgrade in place (binary install)
-curl -fsSL https://raw.githubusercontent.com/pilotspace/moon/main/install.sh \
-  | VERSION=v0.8.5 INSTALL_DIR=/usr/local/bin sh
+curl -fsSL https://raw.githubusercontent.com/pilotspace/lunaris/main/scripts/install-moon.sh \
+  | MOON_VERSION=0.8.5 INSTALL_DIR=/usr/local/bin sh
 systemctl restart moon        # or: docker compose pull moon && docker compose up -d moon
 
 # 3. re-check, then restart lunaris-server

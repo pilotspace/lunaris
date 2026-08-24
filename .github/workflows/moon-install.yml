@@ -1,0 +1,126 @@
+# Does OUR Moon installer actually produce a Moon that Lunaris accepts?
+#
+# This replaces moon-install-smoke.yml (removed 2026-08-25), which tested
+# Moon's own curl one-liner. That job existed to detect a third-party release
+# failure Lunaris could not fix, and it had been red since v0.8.5: Moon's
+# installer downloads a release tarball, and v0.8.5/v0.8.6/v0.8.7 all publish
+# ZERO assets while the ghcr image is private.
+#
+# Lunaris is not gated on another project's release pipeline any more.
+# scripts/install-moon.sh owns the install: reuse an existing Moon, else a
+# published tarball, else build from the public source tag. This job proves
+# that ladder still reaches a binary the connect gate accepts.
+#
+# Unlike its predecessor this CAN be fixed by a contributor's PR — the script
+# under test is ours — so it runs on changes to the script as well as nightly.
+#
+# Ports: none. The job installs a binary and asks it for its version. It never
+# starts a server, so it cannot touch 6379/6380/6381 or any bench port.
+name: moon-install
+
+on:
+  pull_request:
+    paths:
+      - "scripts/install-moon.sh"
+      - "scripts/tests/test_moon_install_is_lunaris_owned.py"
+      - "crates/lunaris-storage-moon/src/version.rs"
+      - ".github/workflows/moon-install.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/install-moon.sh"
+      - "crates/lunaris-storage-moon/src/version.rs"
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: install-moon.sh (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # Rung 3 compiles Moon from source. That is minutes, not seconds, and it is
+    # the rung that actually runs today.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      # Read the requirement from the source of truth rather than repeating it
+      # here. A hardcoded version would drift the moment the gate moves, and
+      # this job would then cheerfully approve a Moon that Lunaris rejects.
+      - name: Read MIN_MOON_VERSION from the connect gate
+        id: req
+        run: |
+          set -euo pipefail
+          src=crates/lunaris-storage-moon/src/version.rs
+          line=$(grep -E 'pub const MIN_MOON_VERSION' "$src")
+          major=$(echo "$line" | sed -E 's/.*major: *([0-9]+).*/\1/')
+          minor=$(echo "$line" | sed -E 's/.*minor: *([0-9]+).*/\1/')
+          patch=$(echo "$line" | sed -E 's/.*patch: *([0-9]+).*/\1/')
+          if ! [ "$major$minor$patch" -eq "$major$minor$patch" ] 2>/dev/null; then
+            echo "::error::could not parse MIN_MOON_VERSION out of $src — the"\
+                 "constant moved or changed shape, and this job would silently"\
+                 "compare against an empty version. Fix the parser."
+            exit 1
+          fi
+          echo "min=${major}.${minor}.${patch}" >> "$GITHUB_OUTPUT"
+          echo "Lunaris requires moon >= ${major}.${minor}.${patch}"
+
+      # No continue-on-error. The whole point of owning the installer is that
+      # its failure is OUR bug and must go red.
+      - name: Run the documented install command
+        env:
+          INSTALL_DIR: ${{ runner.temp }}/moon-bin
+        run: |
+          set -euo pipefail
+          mkdir -p "$INSTALL_DIR"
+          sh scripts/install-moon.sh
+
+      - name: Verify the installed Moon satisfies the connect gate
+        env:
+          INSTALL_DIR: ${{ runner.temp }}/moon-bin
+          MIN: ${{ steps.req.outputs.min }}
+        run: |
+          set -euo pipefail
+          bin="${INSTALL_DIR}/moon"
+          if [ ! -x "$bin" ]; then
+            echo "::error::install-moon.sh produced no binary at ${bin}."
+            echo "::error::All three rungs failed. Check whether the source"\
+                 "clone or build broke — see scripts/install-moon.sh."
+            exit 1
+          fi
+          got=$("$bin" --version | head -n1 | tr ' ' '\n' \
+                | grep -m1 '^v\?[0-9][0-9.]*' | sed -e 's/^v//' -e 's/-.*$//')
+          echo "installed moon: ${got} (require >= ${MIN})"
+          lowest=$(printf '%s\n%s\n' "$MIN" "$got" \
+                   | sort -t. -k1,1n -k2,2n -k3,3n | head -n1)
+          if [ "$lowest" != "$MIN" ]; then
+            echo "::error::installed Moon ${got} is BELOW the required ${MIN}."\
+                 "Lunaris would refuse this server at connect."
+            exit 1
+          fi
+
+      # Idempotence is a real property here: setup-lunaris-agents.py may call
+      # this script on a machine that already has a Moon, and a second run that
+      # rebuilt from source would turn a no-op into a multi-minute stall.
+      - name: Second run is a no-op
+        env:
+          INSTALL_DIR: ${{ runner.temp }}/moon-bin
+          MOON_BIN: ${{ runner.temp }}/moon-bin/moon
+        run: |
+          set -euo pipefail
+          out=$(sh scripts/install-moon.sh 2>&1)
+          echo "$out"
+          echo "$out" | grep -q "nothing to do" || {
+            echo "::error::a second run did not short-circuit. Rung 1"\
+                 "(find_existing_moon) failed to see the Moon just installed."
+            exit 1
+          }
