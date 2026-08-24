@@ -233,12 +233,44 @@ jobs:
         # (docs/operations/external-moon.md).
         run: bash scripts/ci/reset_moon.sh
 
+      - name: Build the chaos driver binary
+        # BOTH crash suites spawn `chaos` as a subprocess, and NOTHING built
+        # it. `chaos` lives in `lunaris-bench`, a DIFFERENT package from either
+        # test, so Cargo never sets `CARGO_BIN_EXE_chaos` (that variable covers
+        # same-package bins only) and both fall back to
+        # `<target>/<profile>/chaos`, which did not exist on a runner.
+        #
+        # This is why `chaos_helios_sigkill`'s park reason was not just wrong
+        # but incomplete: it blamed wall-clock, and the actual blocker was a
+        # missing binary. Nobody knew, because the test had never run — a
+        # never-run test's documented requirements are themselves unverified.
+        #
+        # Debug profile: both resolvers pick the directory from
+        # `cfg!(debug_assertions)`, and `cargo test` without `--release` is
+        # debug.
+        run: cargo build -p lunaris-bench --bin chaos
+
       - name: Run conformance tests with moon-it
+        # `chaos-it` added 2026-08-24. Without it `crash_recovery.rs` compiles
+        # to a SINGLE test — `chaos_it_feature_disabled_placeholder` — and
+        # reports green. The feature gates the whole
+        # `moon_atomic_write_is_all_or_nothing_under_kill_minus_9` proptest
+        # (spawn, SIGKILL, assert the primitive count is unchanged), and NO
+        # workflow enabled it, so the crash-recovery suite had never run. For a
+        # product that leads with provable atomicity, neither of its two crash
+        # suites executing anywhere is the gap worth closing.
+        #
+        # Cost measured 2026-08-24 on a live Moon: 24.6 / 30.1 / 28.8 s.
+        #
+        # Note this is a THIRD parking mechanism, invisible to both the
+        # `#[ignore]` ratchet and the routing sweep: a whole file behind
+        # `#[cfg(feature = ...)]` with a placeholder test standing in for it.
+        # See ship-plan.
         # Scope is strictly -p lunaris-conformance (NOT --workspace) to keep the
         # 8-min budget tight; --workspace is owned by ci.yml.
         run: |
           cargo test -p lunaris-conformance \
-            --features moon-it \
+            --features "moon-it chaos-it" \
             --no-fail-fast
 
       - name: Reset Moon (fresh data dir)
@@ -395,10 +427,19 @@ jobs:
         run: bash scripts/ci/reset_moon.sh
 
       - name: Run the SIGKILL chaos gate (zero orphans)
-        # Parked since it was written, on a reason that measurement contradicts.
-        # The `#[ignore]` read "50x2 SIGKILL live run — real wall-clock cost is
-        # the blocker ... deliberately outside the 8-minute integration budget",
-        # and this workflow repeated the claim.
+        # Parked since it was written, on a reason that is both wrong AND
+        # incomplete. The `#[ignore]` read "50x2 SIGKILL live run — real
+        # wall-clock cost is the blocker, not the environment ... deliberately
+        # outside the 8-minute integration budget", and this workflow repeated
+        # the claim.
+        #
+        # "not the environment" is the part that was flatly false: the FIRST CI
+        # run of this step died in 0.01s with
+        # `spawn chaos --profile helios child: NotFound` — the `chaos` driver
+        # binary lives in `lunaris-bench` and nothing built it. So the real
+        # blocker was an unbuilt fixture, and the reason blamed wall-clock. A
+        # never-run test's documented requirements are themselves unverified;
+        # the "Build the chaos driver binary" step above is the actual fix.
         #
         # The "8-minute budget" was never a cap — it is this job's OBSERVED
         # duration (7.8-8.7 min). The job carries `timeout-minutes: 25`, so
