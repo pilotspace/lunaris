@@ -23,12 +23,13 @@ to it.
 
 From a fresh checkout to a memory-enabled Claude Code — capture on every
 lifecycle event plus cross-session recall injected into your context — in
-two commands (plus a one-time Moon install):
+two commands — setup installs Moon for you if it is missing:
 
 ```sh
-# 0. One-time: install the Moon server (lands in ~/.local/bin/moon).
-#    Pin a version / target dir: VERSION=v0.6.0 INSTALL_DIR=/usr/local/bin sh install.sh
-curl -fsSL https://raw.githubusercontent.com/pilotspace/moon/main/install.sh | sh
+# 0. OPTIONAL — step 1 does this for you when no Moon is found.
+#    Run it yourself to control placement or pin forward:
+#    MOON_VERSION=0.8.7 INSTALL_DIR=/usr/local/bin
+curl -fsSL https://raw.githubusercontent.com/pilotspace/lunaris/main/scripts/install-moon.sh | sh
 
 # 1. Install: build the hook + MCP binaries, point Claude Code at Moon,
 #    write ~/.claude/settings.json (backed up to .bak first).
@@ -41,10 +42,17 @@ scripts/setup-lunaris-agents.py --agent claude --verify
 ```
 
 Setup resolves the Moon binary in order: explicit `--moon-bin`, `moon` on
-PATH, `~/.local/bin/moon` (the curl installer's target), then the vendored
-`vendor/moon/target/release/moon` build artifact. With no binary found it
-exits with the curl one-liner above — Lunaris agent setup is Moon-only, and
+PATH, `~/.local/bin/moon` (the installer's target), then the vendored
+`vendor/moon/target/release/moon` build artifact. **With no binary found it
+installs one** — it runs `scripts/install-moon.sh` itself, so step 0 is
+optional rather than a prerequisite. Pass `--install-moon never` to get the
+old behaviour (fail with instructions). Lunaris agent setup is Moon-only, and
 `--storage-backend sqlite` is rejected.
+
+If no release tarball exists for your platform the installer builds Moon from
+source, which takes several minutes — see
+[`scripts/install-moon.sh`](../../scripts/install-moon.sh) for the full
+ladder.
 
 `--verify` output on success:
 
@@ -78,7 +86,7 @@ From a Lunaris checkout:
 
 ```sh
 # One-time Moon install (the setup below requires a Moon binary).
-curl -fsSL https://raw.githubusercontent.com/pilotspace/moon/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/pilotspace/lunaris/main/scripts/install-moon.sh | sh
 
 # Verified local checkout setup.
 scripts/setup-lunaris-agents.py --agent claude --runner local

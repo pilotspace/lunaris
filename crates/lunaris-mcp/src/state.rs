@@ -69,7 +69,7 @@ guessing a Moon endpoint is worse than refusing: `moon://127.0.0.1:6380` may \
 belong to an unrelated store, and an MCP server that mis-routes an agent's \
 memory is harder to notice than one that will not start.\n\n\
 Stand a Moon up:\n  \
-curl -fsSL https://raw.githubusercontent.com/pilotspace/moon/main/install.sh | sh\n  \
+curl -fsSL https://raw.githubusercontent.com/pilotspace/lunaris/main/scripts/install-moon.sh | sh\n  \
 moon --bind 127.0.0.1 --port 6380 --shards 1 --dir ~/.lunaris/moon\n\
 then start with `--storage moon://127.0.0.1:6380`. Moon MUST run with \
 `--shards 1` (Lunaris ingest is a single-shard TXN). Full recipe — durability, \

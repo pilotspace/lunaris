@@ -171,7 +171,7 @@ lunaris-contextd Moon is advertised at `~/.lunaris/contextd-moon.url`. \
 fallback was deleted with the embedded backend, and there is deliberately no \
 replacement default (guessing a port could route an agent's captures into an \
 unrelated Moon). Stand one up:\n  \
-curl -fsSL https://raw.githubusercontent.com/pilotspace/moon/main/install.sh | sh\n  \
+curl -fsSL https://raw.githubusercontent.com/pilotspace/lunaris/main/scripts/install-moon.sh | sh\n  \
 moon --bind 127.0.0.1 --port 6380 --shards 1 --dir ~/.lunaris/moon\n\
 then export LUNARIS_STORE_URL=moon://127.0.0.1:6380 . Moon MUST run with \
 `--shards 1` (Lunaris ingest is a single-shard TXN). Full recipe — durability, \

@@ -467,7 +467,7 @@ impl MoonClient {
                  otherwise surface later as an opaque `ERR unknown command` in the \
                  middle of a recall. \
                  To proceed: upgrade the server — \
-                 `curl -fsSL https://raw.githubusercontent.com/pilotspace/moon/main/install.sh \
+                 `curl -fsSL https://raw.githubusercontent.com/pilotspace/lunaris/main/scripts/install-moon.sh \
                  | VERSION=v{min} sh`, or run the ghcr.io/pilotspace/moon image at a tag \
                  >= v{min} — then reconnect. \
                  Confirm with `redis-cli -h {host} -p {port} INFO server | grep moon_version`.",

@@ -150,8 +150,9 @@ to each [GitHub release](https://github.com/pilotspace/lunaris/releases).
 per-scope SQLite file; 0.7.0 deleted that backend, and the server now refuses
 to boot rather than guess a store — a mis-routed memory is harder to notice
 than a process that will not start. Point it at a Moon
-(`moon://127.0.0.1:6380`), started with `--shards 1`; install Moon via the
-Moon repo's curl one-liner or the `ghcr.io/pilotspace/moon` image. A source
+(`moon://127.0.0.1:6380`), started with `--shards 1`; install Moon with
+`scripts/install-moon.sh` (agent setup runs it for you when no Moon is
+found). A source
 build with `--features embedded-moon` auto-launches an in-process Moon — an
 opt-in for development, not the published-binary default. First ingest stages
 the embedder weights once (lazy GGUF download).
