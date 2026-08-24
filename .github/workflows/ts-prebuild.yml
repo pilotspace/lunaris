@@ -293,15 +293,47 @@ jobs:
             "@pilotspace/lunaris-win32-x64-msvc" \
             "@pilotspace/lunaris"; do
             found=""
-            # The npmjs packument root can lag a fresh publish by a few
-            # seconds; retry before declaring a package missing so this gate
-            # reports real absences, not replication lag.
-            for attempt in 1 2 3 4 5 6; do
-              if npm view "${pkg}@${VERSION}" version >/dev/null 2>&1; then
+            # The npmjs packument root can lag a fresh publish; retry before
+            # declaring a package missing so this gate reports real absences,
+            # not replication lag.
+            #
+            # Two things made the v0.7.1 run a FALSE RED, and both are fixed
+            # here. The gate reported "@pilotspace/lunaris-darwin-x64@0.7.1
+            # MISSING" for a version that was, in fact, published fine.
+            #
+            # 1. Budget. The old loop was 6 x 10s = 60s. The registry did not
+            #    register darwin-x64 until 20:34:06.999Z — about 50s AFTER the
+            #    verify loop began, and long after `npm publish` had exited 0.
+            #    Publish acknowledgement and version availability are separate
+            #    events on npmjs, and 60s does not reliably cover the gap.
+            #    Now 18 x 10s = 180s.
+            #
+            # 2. Cache. `npm view` reads through npm's local HTTP cache, so a
+            #    negative lookup can be served back for the rest of the job
+            #    even once the registry has caught up — the retry loop then
+            #    re-asks a cache that already said no. That is a check whose
+            #    later attempts cannot succeed. We now query the registry
+            #    endpoint directly with curl, which has no npm cache in front
+            #    of it, and keep `npm view --prefer-online` only as a fallback
+            #    if curl is unavailable.
+            #
+            # A false red here is expensive: it is indistinguishable from the
+            # real partial-publish this gate exists to catch, so it trains the
+            # releaser to ignore the one signal that matters.
+            enc_pkg="${pkg/@/%40}"; enc_pkg="${enc_pkg//\//%2f}"
+            for attempt in $(seq 1 18); do
+              if curl -sf -H 'Cache-Control: no-cache' \
+                   "https://registry.npmjs.org/${enc_pkg}/${VERSION}" \
+                   >/dev/null 2>&1; then
                 found="yes"
                 break
               fi
-              echo "  ${pkg}@${VERSION} not visible yet (attempt ${attempt}/6)"
+              if npm view --prefer-online "${pkg}@${VERSION}" version \
+                   >/dev/null 2>&1; then
+                found="yes"
+                break
+              fi
+              echo "  ${pkg}@${VERSION} not visible yet (attempt ${attempt}/18)"
               sleep 10
             done
             if [ -n "${found}" ]; then
