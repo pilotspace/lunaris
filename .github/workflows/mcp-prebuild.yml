@@ -100,6 +100,35 @@ jobs:
           } >> "$GITHUB_ENV"
       - name: Build lunaris-mcp release binary
         run: cargo build --release -p lunaris-mcp --target ${{ matrix.target }}
+      - name: Check binary size
+        # `lunaris-mcp` is one of the two binaries users actually download
+        # (npx / uvx), and until now NOTHING gated its size. The repo's only
+        # size gate (`crates/lunaris-bench/tests/binary_size_gate.rs`) guards
+        # `lunaris-server`, which no workflow builds in release and which is
+        # not a shipped artifact — and that gate had itself never run, because
+        # its `ci-perf-gates` feature is enabled by no workflow.
+        #
+        # The ceiling is deliberately generous. Binary size is
+        # platform-dependent and the only measurement available when this
+        # landed was macOS arm64 from one machine (14.73 MiB). Setting a tight
+        # ceiling from one host on one OS is the same single-sample error this
+        # repo has been burned by twice. The script ALWAYS reports the measured
+        # size into the job summary, so a real cross-platform baseline
+        # accumulates from these runs — tighten from that data, not a laptop.
+        shell: bash
+        env:
+          MATRIX_TARGET: ${{ matrix.target }}
+          IS_WINDOWS: ${{ runner.os == 'Windows' }}
+        run: |
+          set -euo pipefail
+          OUTDIR="target/${MATRIX_TARGET}/release"
+          if [[ "${IS_WINDOWS}" == "true" ]]; then
+            BINARY="${OUTDIR}/lunaris-mcp.exe"
+          else
+            BINARY="${OUTDIR}/lunaris-mcp"
+          fi
+          python3 scripts/check-binary-size.py "${BINARY}" 40 "lunaris-mcp (${MATRIX_TARGET})"
+
       - name: Package binary into tarball
         shell: bash
         env:
