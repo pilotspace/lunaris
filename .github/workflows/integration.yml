@@ -391,6 +391,32 @@ jobs:
             --no-fail-fast \
             -- --include-ignored
 
+      - name: Assert strict mode actually fires (F36)
+        # Every existing strict guard is necessary and together they are
+        # insufficient. F32's guard proves the flag is PARSED the same way
+        # everywhere; the routing sweep proves each suite SENDS its skip
+        # through the helper. Neither runs the one arm that discriminates a
+        # working strict mode from a decorative one: **strict ON with the
+        # fixture ABSENT**.
+        #
+        # This job structurally cannot run that arm inline — it sets
+        # LUNARIS_CONFORMANCE_STRICT=1 *and* builds a Moon, so strict never
+        # fires in the steps above. A suite whose helper call is unreachable is
+        # green here, green in the sweep, and green in the flag guard, all at
+        # once. That is exactly how F27's three half-routed files hid.
+        #
+        # So the script re-runs the same targets with MOON_URL unset and
+        # MOON_TEST_BINARY pointed at nothing, and asserts each one FAILS.
+        # Placed at the END of this job on purpose: every test binary is
+        # already compiled by the steps above, so the marginal cost is a few
+        # seconds of re-running them, not a rebuild.
+        #
+        # Verified locally 2026-08-24: all 10 targets fail as required, and the
+        # guard was mutation-tested by adding a target known to pass — it goes
+        # red with "strict mode is DECORATIVE for this target".
+        if: success() || failure()
+        run: bash scripts/ci/assert-strict-fires.sh
+
       - name: Timing summary (budget evidence)
         # Runs unconditionally so budget data is captured even on test failure.
         # SECONDS is the bash shell-init wall-clock counter; per-step SECONDS
