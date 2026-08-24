@@ -60,5 +60,12 @@ export function runTag(): string {
  * per pair of runs. A collision just re-creates the old failure, loudly.
  */
 export function runWindowOffsetMs(): number {
-  return (crypto.randomBytes(4).readUInt32BE(0) % 100_000) * 7 * 86_400_000;
+  // `crypto.randomInt`, not `randomBytes(4) % 100_000`: a modulo of a 32-bit
+  // value by a non-power-of-two biases the low slots, and CodeQL's
+  // `js/biased-cryptographic-random` flags it high-severity. The bias is
+  // irrelevant to a test discriminator, but the unbiased API is the same one
+  // line — and `secrets.randbelow`, which the Python twin uses, already
+  // rejection-samples. Matching them costs nothing and leaves no alert to
+  // explain away.
+  return crypto.randomInt(0, 100_000) * 7 * 86_400_000;
 }
