@@ -74,9 +74,34 @@ attach_pipeline_properties(_RustLunaris)
 
 # Wave 3G — patch `.scoped(scope)` onto the Rust Lunaris class so callers can
 # write `engine.scoped(Scope("acme:agent-1"))` naturally. The free function
-# `_lunaris_scoped(handle, scope)` is the Rust implementation; the lambda
-# adapts it to the method call shape without any `py.eval` unsafe path.
-_RustLunaris.scoped = lambda self, scope: _lunaris_scoped(self, scope)  # type: ignore[attr-defined]
+# `_lunaris_scoped(handle, scope)` is the Rust implementation; the wrapper
+# below adapts it to the method call shape without any `py.eval` unsafe path,
+# and repairs the scoped `dsl()` surface (see W4.12 note inside).
+def _scoped(self, scope):  # noqa: ANN001, ANN202 — patched onto a PyO3 class
+    scoped = _lunaris_scoped(self, scope)
+    # W4.12 — `ScopedLunaris::dsl()` (Rust) hands back the codegen-FROZEN
+    # `generated::PyRetrievalBuilder`, which has no `query` and no `execute`:
+    # every scoped DSL call ended in a bare `AttributeError`. Overriding the
+    # method per-instance (ScopedLunaris is `#[pyclass(dict)]`, so the instance
+    # dict shadows the type's non-data descriptor) returns the WORKING
+    # `lunaris.dsl.RetrievalBuilder` pre-bound to the handle AND to the scope,
+    # so `handle.scoped(s).dsl()` composes and executes inside the partition.
+    from .dsl import RetrievalBuilder as _RetrievalBuilder
+
+    def _scoped_dsl() -> "_RetrievalBuilder":
+        return _RetrievalBuilder(handle=self, scope=str(scope))
+
+    try:
+        scoped.dsl = _scoped_dsl
+    except (AttributeError, TypeError):
+        # Same fallback shape as `_attach_recall_shim`: if the PyO3 class ever
+        # stops accepting dynamic attributes, callers can still compose by hand
+        # with `RetrievalBuilder().bind(handle).with_scope(scope)`.
+        pass
+    return scoped
+
+
+_RustLunaris.scoped = _scoped  # type: ignore[attr-defined]
 
 Lunaris = _RustLunaris  # Public re-export under the ergonomic name.
 

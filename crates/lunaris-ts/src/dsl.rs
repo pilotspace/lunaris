@@ -36,7 +36,8 @@ use crate::errors::napi_err;
 /// Minimal `recall` execute bridge for the TS-side DSL.
 ///
 /// Accepts a plan JSON of shape:
-/// `{"root": {...}, "query": "...", "filter": "...", "as_of_ms": 123}`, where
+/// `{"root": {...}, "query": "...", "filter": "...", "as_of_ms": 123,
+/// "scope": "acme-agent-1"}`, where
 /// `root` is the operator tree documented on `lunaris_retrieve::plan`.
 /// All keys are optional. When `root` is absent the flat pre-F14 fields
 /// (`index`, `k`) are read instead and normalized into the equivalent one-leg
@@ -56,6 +57,13 @@ pub async fn recall_simple_execute(
     let query_text = plan.get("query").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let filter_str_opt = plan.get("filter").and_then(|v| v.as_str()).map(|s| s.to_string());
     let as_of_ms = plan.get("as_of_ms").and_then(|v| v.as_u64());
+    // W4.12 — the partition key. Envelope-level for the same reason `filter`
+    // is: one scope narrows every leg of the plan. Absent means the caller
+    // composed from the unscoped `handle.recall()`, and the engine falls back
+    // to `Scope::dev()` with its own warning; a `scope` here comes from
+    // `handle.scoped(s).dsl()` and MUST reach `with_scope` or the DSL silently
+    // reads another tenant's partition.
+    let scope_str = plan.get("scope").and_then(|v| v.as_str()).map(|s| s.to_string());
 
     // The operator tree. Absent = the pre-F14 flat shape, which is rewritten
     // into the one-leg tree that means the same thing rather than executed by
@@ -71,7 +79,13 @@ pub async fn recall_simple_execute(
     };
     let root = ::lunaris::retriever_from_json(&root_json)
         .map_err(|e| crate::errors::napi_err_with_code("VALIDATE", format!("plan: {e}")))?;
-    let mut builder = inner.recall().with_root_boxed(root);
+    let mut builder = inner.recall();
+    if let Some(s) = scope_str {
+        let scope = ::lunaris::Scope::new(&s)
+            .map_err(|e| crate::errors::napi_err_with_code("VALIDATE", format!("scope: {e}")))?;
+        builder = builder.with_scope(scope);
+    }
+    let mut builder = builder.with_root_boxed(root);
     if let Some(s) = filter_str_opt {
         builder = builder.filter_str(&s).map_err(|e| {
             crate::errors::napi_err_with_code("VALIDATE", format!("filter_str: {e}"))
