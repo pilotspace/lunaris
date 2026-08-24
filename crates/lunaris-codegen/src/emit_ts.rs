@@ -202,6 +202,12 @@ fn emit_ts_method_rust(
         // `napi::Result<T>` path. Using `emit_ts_owned_bindings` (the
         // fallible variant) collapses the two paths.
         (IrAsync::No, IrReceiver::None) => {
+            // W4.17 — `Scope` joins the fallible set. It is a VALIDATED
+            // newtype (`Scope::new` rejects `:` and anything outside
+            // `[A-Za-z0-9_\-.]{1,128}`), so a factory taking one cannot
+            // return a bare `Self`: the only alternatives are a panic across
+            // the FFI or trusting the caller's string, and trusting it is how
+            // a scope byte-aliases another tenant's keyspace.
             let any_fallible = m.params.iter().any(|p| {
                 matches!(
                     &p.ty,
@@ -209,6 +215,7 @@ fn emit_ts_method_rust(
                         | IrTyRef::Named { .. }
                         | IrTyRef::Option { .. }
                         | IrTyRef::Json
+                        | IrTyRef::Scope
                 )
             });
             let ret_ty = if any_fallible { "napi::Result<Self>" } else { "Self" };
@@ -499,14 +506,19 @@ fn emit_ts_owned_bindings(out: &mut String, params: &[IrParam]) -> Vec<String> {
             IrTyRef::Str | IrTyRef::Usize | IrTyRef::Bool | IrTyRef::Unit | IrTyRef::RefSelf => {
                 names.push(p.name.clone());
             }
-            // N-04 — synthesise Scope inside the binding layer; the napi-rs
-            // wrapper signature skips this param (see `format_params_rust`).
+            // W4.17 — the partition key, surfaced to the caller and
+            // validated. It used to be synthesised as `Scope::dev()` so the
+            // SDK never saw it, which meant every recipe in every SDK shared
+            // ONE partition whatever the caller did. Routed through
+            // `Scope::new` so a bad scope string is a loud error, not a
+            // silently-aliasing key.
             IrTyRef::Scope => {
                 let owned_name = format!("{}_owned", p.name);
                 writeln!(
                     out,
-                    "        let {owned_name}: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();",
+                    "        let {owned_name}: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&{param})\n            .map_err(|e| {{\n                crate::errors::napi_err_with_code(\"VALIDATE\", format!(\"scope: {{e}}\"))\n            }})?;",
                     owned_name = owned_name,
+                    param = p.name,
                 )
                 .unwrap();
                 names.push(owned_name);
@@ -569,16 +581,15 @@ fn emit_ts_owned_bindings_infallible(out: &mut String, params: &[IrParam]) -> Ve
             IrTyRef::Str | IrTyRef::Usize | IrTyRef::Bool | IrTyRef::Unit | IrTyRef::RefSelf => {
                 names.push(p.name.clone());
             }
-            // N-04 — synthesise Scope inside the binding layer; the napi-rs
-            // wrapper signature skips this param (see `format_params_rust`).
+            // W4.17 — unreachable by construction: `Scope` is in the
+            // `any_fallible` set, so a method carrying one is emitted through
+            // the FALLIBLE binder above, which is the only context where the
+            // `Scope::new` validation can `?`. Emitting a sentinel keeps that
+            // a rustc error rather than a silently-unvalidated scope.
             IrTyRef::Scope => {
                 let owned_name = format!("{}_owned", p.name);
-                writeln!(
-                    out,
-                    "        let {owned_name}: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();",
-                    owned_name = owned_name,
-                )
-                .unwrap();
+                writeln!(out, "        let {owned_name} = <<SCOPE_NEEDS_THE_FALLIBLE_BINDER>>;")
+                    .unwrap();
                 names.push(owned_name);
             }
             // Plan 11-02a D3(a) — Handle wrapper: clone `.inner` directly,
@@ -712,13 +723,11 @@ fn emit_ts_method_dts(out: &mut String, m: &IrMethod) {
     }
     let is_static = matches!(m.receiver, IrReceiver::None);
     let prefix = if is_static { "  static " } else { "  " };
-    // N-04 — Scope params are hidden from the SDK; the `.d.ts` MUST mirror
-    // the napi-rs Rust signature (which already skips Scope via
-    // `format_params_rust`).
+    // W4.17 — Scope params ARE part of the SDK signature now; the `.d.ts`
+    // MUST mirror the napi-rs Rust signature, which no longer skips them.
     let params = m
         .params
         .iter()
-        .filter(|p| !matches!(p.ty, IrTyRef::Scope))
         .map(|p| format!("{}: {}", lower_camel(&p.name), ts_param_ty_dts(&p.ty)))
         .collect::<Vec<_>>()
         .join(", ");
@@ -731,10 +740,10 @@ fn emit_ts_method_dts(out: &mut String, m: &IrMethod) {
 
 fn format_params_rust(params: &[IrParam], _with_self: bool) -> String {
     let mut s = String::new();
-    // N-04 — `Scope` params are synthesised at the call site
-    // (`::lunaris_core::scope::Scope::dev()`). They MUST NOT appear in the
-    // wrapper signature; the TS SDK is intentionally single-tenant.
-    for p in params.iter().filter(|p| !matches!(p.ty, IrTyRef::Scope)) {
+    // W4.17 — `Scope` params ARE part of the wrapper signature now. They used
+    // to be filtered out here and synthesised as `Scope::dev()` at the call
+    // site, which is why no SDK caller could partition a recipe at all.
+    for p in params.iter() {
         s.push_str(", ");
         s.push_str(&p.name);
         s.push_str(": ");
@@ -776,10 +785,10 @@ fn ts_param_ty_rust(ty: &IrTyRef) -> String {
         // Plan 11-02a D3(a) — Handle: napi-rs class reference (by Rust
         // struct name, which equals the TS class name for napi exports).
         IrTyRef::Handle { name } => format!("&{name}"),
-        // N-04 — Scope is filtered out by `format_params_rust`; this arm is
-        // defensive and emits a sentinel that would loudly fail rustc if it
-        // ever escaped the filter.
-        IrTyRef::Scope => "<<SCOPE_SHOULD_BE_FILTERED>>".to_string(),
+        // W4.17 — the partition key crosses the FFI as a plain string and is
+        // validated by `Scope::new` at the call site, so a bad scope is a
+        // loud `VALIDATE:` error rather than a silently-aliasing key.
+        IrTyRef::Scope => "String".to_string(),
     }
 }
 
@@ -796,8 +805,8 @@ fn ts_param_ty_dts(ty: &IrTyRef) -> String {
         IrTyRef::Vec { inner } => format!("Array<{}>", ts_param_ty_dts(inner)),
         // Plan 11-02a D3(a) — Handle: TS class name (same as Rust struct).
         IrTyRef::Handle { name } => name.clone(),
-        // N-04 — defensive arm; .d.ts param emission filters Scope.
-        IrTyRef::Scope => "<<SCOPE_SHOULD_BE_FILTERED>>".to_string(),
+        // W4.17 — the partition key is a plain string on the TS surface.
+        IrTyRef::Scope => "string".into(),
     }
 }
 

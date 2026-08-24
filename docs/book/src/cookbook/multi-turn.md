@@ -16,7 +16,7 @@ filter (closing the cross-user consolidator-leak risk).
 
 | Method | Signature | Forwards to |
 |---|---|---|
-| `new` | `fn new(lunaris: Arc<Lunaris>, user_id: &str) -> Self` | `MessageStream::new` + `WorkingMemory::new` |
+| `new` | `fn new(lunaris: Arc<Lunaris>, scope: Scope, user_id: &str) -> Self` | `MessageStream::new` + `WorkingMemory::new` |
 | `remember` | `async fn remember(turn: impl Into<String>, thread_id: impl Into<String>) -> Result<Lsn, LunarisError>` | `MessageStream::ingest(turn, thread_id, "user")` |
 | `recall` | `async fn recall(query: &str) -> Result<Vec<Hit>, LunarisError>` | `MessageStream::recall` |
 | `consolidate` | `async fn consolidate() -> Result<ConsolidationReport, LunarisError>` | `WorkingMemory::consolidate` |
@@ -40,18 +40,20 @@ consolidation pass.
 
 ```rust,no_run
 use std::sync::Arc;
-use lunaris::Lunaris;
+use lunaris::{Lunaris, Scope};
 use lunaris_recipes::conversational::MultiTurnConversation;
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
     let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+    // The partition every recipe below reads and writes in.
+    let scope = Scope::new("acme-support-bot")?;
 
     // (Optional) install a consolidator — without one, consolidate() is a
     // no-op that returns an empty report. The default pipeline is OFF.
     // lunaris.consolidator_pipeline().set_consolidator(Arc::new(my_consolidator));
 
-    let conv = MultiTurnConversation::new(lunaris.clone(), "user-42");
+    let conv = MultiTurnConversation::new(lunaris.clone(), scope.clone(), "user-42");
 
     // Session "trip-planning".
     conv.remember("I'm planning a trip to Kyoto in April.", "trip-planning").await?;
@@ -79,7 +81,7 @@ async fn main() -> Result<(), lunaris::LunarisError> {
 ## Resuming a session
 
 **Like [`ChatAgentMemory`](./chat-agent.md#resuming-a-session), there is no
-explicit load — reconstruct `MultiTurnConversation::new(handle, "user-42")`
+explicit load — reconstruct `MultiTurnConversation::new(handle, scope, "user-42")`
 with the same `user_id` and the backend already holds every prior turn.** To
 resume one *specific* session, pass the same `thread_id` to `remember` again:
 turns from that session keep landing under the same `Episode` source segment.
@@ -88,11 +90,12 @@ shapes how turns are grouped, not what recall sees:
 
 ```rust,no_run
 # use std::sync::Arc;
-# use lunaris::Lunaris;
+# use lunaris::{Lunaris, Scope};
 # use lunaris_recipes::conversational::MultiTurnConversation;
 # async fn run(lunaris: Arc<Lunaris>) -> Result<(), lunaris::LunarisError> {
+# let scope = Scope::new("acme-support-bot")?;
 // A new process — same user, continuing the "trip-planning" session.
-let conv = MultiTurnConversation::new(lunaris.clone(), "user-42");
+let conv = MultiTurnConversation::new(lunaris.clone(), scope.clone(), "user-42");
 conv.remember("Confirmed the ryokan for the 14th.", "trip-planning").await?;
 
 // Recall still spans every session this user has ever had.

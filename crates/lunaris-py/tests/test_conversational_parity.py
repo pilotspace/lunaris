@@ -101,6 +101,13 @@ def _load_fixture(name: str) -> dict[str, Any]:
 # grown a second copy of it.
 _run_tag = run_tag
 
+# W4.17 — ONE scope per suite run. Recipes take a partition key as of W4.17,
+# and it is the axis Moon actually partitions on: a per-run scope isolates a
+# run from every earlier run AND from the TypeScript twin, at the level below
+# any top-k. The per-scenario source prefixes below stay because they separate
+# scenarios FROM EACH OTHER inside this run, not runs from each other.
+_SUITE_SCOPE = f"pyconv-{run_tag()}"
+
 
 def _parse_host_port(url: str) -> tuple[str, int] | None:
     """Mirror of `conftest.py::_parse_moon_host_port`.
@@ -219,7 +226,7 @@ def test_chat_agent_memory_round_trip() -> None:
 
     async def run() -> list[Any]:
         moon = await _open_moon(moon_url)
-        cam = ChatAgentMemory.new(moon, user_id)
+        cam = ChatAgentMemory.new(moon, _SUITE_SCOPE, user_id)
         for turn in turns:
             await cam.remember(turn["text"])
         return await cam.recall(query)
@@ -253,8 +260,8 @@ def test_multi_turn_conversation_never_crosses_the_user_boundary() -> None:
 
     async def run() -> tuple[list[Any], Any]:
         moon = await _open_moon(moon_url)
-        conv = MultiTurnConversation.new(moon, user_id)
-        other = MultiTurnConversation.new(moon, other_user_id)
+        conv = MultiTurnConversation.new(moon, _SUITE_SCOPE, user_id)
+        other = MultiTurnConversation.new(moon, _SUITE_SCOPE, other_user_id)
 
         for session in sessions:
             for turn in session["turns"]:
@@ -308,7 +315,7 @@ def test_slack_archive_channel_narrowing_is_a_subset() -> None:
 
     async def run() -> tuple[list[Any], list[Any]]:
         moon = await _open_moon(moon_url)
-        slack = SlackArchive.new(moon)
+        slack = SlackArchive.new(moon, _SUITE_SCOPE)
         for channel in channels:
             for msg in channel["messages"]:
                 await slack.ingest_channel(channel["id"], msg["user"], msg["text"])
@@ -357,7 +364,7 @@ def test_email_threading_thread_narrowing_and_graph_off_default() -> None:
         assert moon.graph_pipeline.is_enabled() is False, (
             "a fresh handle must be graph-off"
         )
-        email = EmailThreading.new(moon)
+        email = EmailThreading.new(moon, _SUITE_SCOPE)
         for msg in messages:
             await email.ingest(root_id, msg["from"], msg["body"])
         hits = await email.thread(root_id).recall(query)
@@ -395,7 +402,7 @@ def test_email_threading_graph_toggle_both_directions() -> None:
     async def run() -> None:
         moon = await _open_moon(moon_url)
         assert moon.graph_pipeline.is_enabled() is False
-        em = EmailThreading.new(moon).with_graph_pipeline(True)
+        em = EmailThreading.new(moon, _SUITE_SCOPE).with_graph_pipeline(True)
         assert moon.graph_pipeline.is_enabled() is True, (
             "with_graph_pipeline(True) must enable the pipeline"
         )
@@ -426,7 +433,7 @@ def test_meeting_notes_memory_round_trip() -> None:
 
     async def run() -> list[Any]:
         moon = await _open_moon(moon_url)
-        mn = MeetingNotesMemory.new(moon)
+        mn = MeetingNotesMemory.new(moon, _SUITE_SCOPE)
         for n in notes:
             await mn.note(n["heading"], f"{n['body']} [run {tag}]")
         return await mn.recall(query)

@@ -222,15 +222,18 @@ pub struct ChatAgentMemory {
 impl ChatAgentMemory {
     /// Construct a ChatAgentMemory bound to `user_id`.
     #[napi(factory)]
-    pub fn new(lunaris: &Lunaris, user_id: String) -> Self {
+    pub fn new(lunaris: &Lunaris, scope: String, user_id: String) -> napi::Result<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
+            .map_err(|e| {
+            crate::errors::napi_err_with_code("VALIDATE", format!("scope: {e}"))
+        })?;
         let inner = ::lunaris_recipes::conversational::ChatAgentMemory::new(
             lunaris_owned,
             scope_owned,
             &user_id,
         );
-        Self { inner: Arc::new(inner) }
+        Ok(Self { inner: Arc::new(inner) })
     }
 
     /// Record a single conversational turn.
@@ -261,15 +264,18 @@ pub struct MultiTurnConversation {
 impl MultiTurnConversation {
     /// Construct bound to `user_id`.
     #[napi(factory)]
-    pub fn new(lunaris: &Lunaris, user_id: String) -> Self {
+    pub fn new(lunaris: &Lunaris, scope: String, user_id: String) -> napi::Result<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
+            .map_err(|e| {
+            crate::errors::napi_err_with_code("VALIDATE", format!("scope: {e}"))
+        })?;
         let inner = ::lunaris_recipes::conversational::MultiTurnConversation::new(
             lunaris_owned,
             scope_owned,
             &user_id,
         );
-        Self { inner: Arc::new(inner) }
+        Ok(Self { inner: Arc::new(inner) })
     }
 
     /// Record a turn for `thread_id` (session id).
@@ -307,12 +313,15 @@ pub struct SlackArchive {
 impl SlackArchive {
     /// Construct a root archive handle.
     #[napi(factory)]
-    pub fn new(lunaris: &Lunaris) -> Self {
+    pub fn new(lunaris: &Lunaris, scope: String) -> napi::Result<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
+            .map_err(|e| {
+            crate::errors::napi_err_with_code("VALIDATE", format!("scope: {e}"))
+        })?;
         let inner =
             ::lunaris_recipes::conversational::SlackArchive::new(lunaris_owned, scope_owned);
-        Self { inner: Arc::new(inner) }
+        Ok(Self { inner: Arc::new(inner) })
     }
 
     /// Ingest one message into `channel` authored by `participant_id`.
@@ -392,12 +401,15 @@ pub struct EmailThreading {
 impl EmailThreading {
     /// Construct a new email-archive handle rooted at `email:thread/`.
     #[napi(factory)]
-    pub fn new(lunaris: &Lunaris) -> Self {
+    pub fn new(lunaris: &Lunaris, scope: String) -> napi::Result<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
+            .map_err(|e| {
+            crate::errors::napi_err_with_code("VALIDATE", format!("scope: {e}"))
+        })?;
         let inner =
             ::lunaris_recipes::conversational::EmailThreading::new(lunaris_owned, scope_owned);
-        Self { inner: Arc::new(inner) }
+        Ok(Self { inner: Arc::new(inner) })
     }
 
     /// Ingest one email into `root_id`'s thread, authored by `from`.
@@ -447,12 +459,15 @@ pub struct MeetingNotesMemory {
 impl MeetingNotesMemory {
     /// Construct bound to `meeting:notes/`.
     #[napi(factory)]
-    pub fn new(lunaris: &Lunaris) -> Self {
+    pub fn new(lunaris: &Lunaris, scope: String) -> napi::Result<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
+            .map_err(|e| {
+            crate::errors::napi_err_with_code("VALIDATE", format!("scope: {e}"))
+        })?;
         let inner =
             ::lunaris_recipes::conversational::MeetingNotesMemory::new(lunaris_owned, scope_owned);
-        Self { inner: Arc::new(inner) }
+        Ok(Self { inner: Arc::new(inner) })
     }
 
     /// Record one note under `heading` (thread_id) with `body` content.
@@ -517,15 +532,18 @@ pub struct DocumentKnowledgeBase {
 impl DocumentKnowledgeBase {
     /// Construct a knowledge base bound to `source_prefix`.
     #[napi(factory)]
-    pub fn new(lunaris: &Lunaris, source_prefix: String) -> Self {
+    pub fn new(lunaris: &Lunaris, scope: String, source_prefix: String) -> napi::Result<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
+            .map_err(|e| {
+            crate::errors::napi_err_with_code("VALIDATE", format!("scope: {e}"))
+        })?;
         let inner = ::lunaris_recipes::documentary::DocumentKnowledgeBase::new(
             lunaris_owned,
             scope_owned,
             &source_prefix,
         );
-        Self { inner: Arc::new(inner) }
+        Ok(Self { inner: Arc::new(inner) })
     }
 
     /// Ingest chunked `(content, metadata)` pairs.
@@ -578,15 +596,18 @@ pub struct ResearchPaperCorpus {
 impl ResearchPaperCorpus {
     /// Construct bound to `source_prefix`.
     #[napi(factory)]
-    pub fn new(lunaris: &Lunaris, source_prefix: String) -> Self {
+    pub fn new(lunaris: &Lunaris, scope: String, source_prefix: String) -> napi::Result<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
+            .map_err(|e| {
+            crate::errors::napi_err_with_code("VALIDATE", format!("scope: {e}"))
+        })?;
         let inner = ::lunaris_recipes::documentary::ResearchPaperCorpus::new(
             lunaris_owned,
             scope_owned,
             &source_prefix,
         );
-        Self { inner: Arc::new(inner) }
+        Ok(Self { inner: Arc::new(inner) })
     }
 
     /// Opt-in the citation graph (blueprint §5.2 graph-default-off).
@@ -627,15 +648,18 @@ pub struct CodeRepoMemory {
 impl CodeRepoMemory {
     /// Construct bound to `repo_prefix`.
     #[napi(factory)]
-    pub fn new(lunaris: &Lunaris, repo_prefix: String) -> Self {
+    pub fn new(lunaris: &Lunaris, scope: String, repo_prefix: String) -> napi::Result<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
+            .map_err(|e| {
+            crate::errors::napi_err_with_code("VALIDATE", format!("scope: {e}"))
+        })?;
         let inner = ::lunaris_recipes::documentary::CodeRepoMemory::new(
             lunaris_owned,
             scope_owned,
             &repo_prefix,
         );
-        Self { inner: Arc::new(inner) }
+        Ok(Self { inner: Arc::new(inner) })
     }
 
     /// Ingest one commit as a batch of `(function_body, metadata)` chunks.
@@ -683,15 +707,18 @@ pub struct TimelineReconstruction {
 impl TimelineReconstruction {
     /// Construct bound to `source_prefix`.
     #[napi(factory)]
-    pub fn new(lunaris: &Lunaris, source_prefix: String) -> Self {
+    pub fn new(lunaris: &Lunaris, scope: String, source_prefix: String) -> napi::Result<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
+            .map_err(|e| {
+            crate::errors::napi_err_with_code("VALIDATE", format!("scope: {e}"))
+        })?;
         let inner = ::lunaris_recipes::documentary::TimelineReconstruction::new(
             lunaris_owned,
             scope_owned,
             &source_prefix,
         );
-        Self { inner: Arc::new(inner) }
+        Ok(Self { inner: Arc::new(inner) })
     }
 
     /// Ingest timeline events as chunked `(content, metadata)` pairs.
@@ -745,12 +772,15 @@ pub struct CustomerSupportHistory {
 impl CustomerSupportHistory {
     /// Construct with hard-coded source prefixes `ticket:` and `chat:`.
     #[napi(factory)]
-    pub fn new(lunaris: &Lunaris) -> Self {
+    pub fn new(lunaris: &Lunaris, scope: String) -> napi::Result<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
+            .map_err(|e| {
+            crate::errors::napi_err_with_code("VALIDATE", format!("scope: {e}"))
+        })?;
         let inner =
             ::lunaris_recipes::documentary::CustomerSupportHistory::new(lunaris_owned, scope_owned);
-        Self { inner: Arc::new(inner) }
+        Ok(Self { inner: Arc::new(inner) })
     }
 
     /// Opt-in the product/customer relationship graph (blueprint §5.2).

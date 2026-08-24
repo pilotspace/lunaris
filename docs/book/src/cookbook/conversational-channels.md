@@ -28,7 +28,7 @@ user-filtered message archive. Read-heavy, so it holds *only* a
 
 | Method | Signature | Notes |
 |---|---|---|
-| `new` | `fn new(lunaris: Arc<Lunaris>) -> Self` | **no prefix arg** — rooted at `slack:archive/` |
+| `new` | `fn new(lunaris: Arc<Lunaris>, scope: Scope, scope: Scope) -> Self` | **no prefix arg** — rooted at `slack:archive/` |
 | `ingest_channel` | `async fn ingest_channel(channel: impl Into<String>, participant_id: impl Into<String>, message: impl Into<String>) -> Result<Lsn, LunarisError>` | `channel` becomes the `MessageStream` `thread_id`; both `channel` + `participant_id` land in metadata |
 | `recall` | `async fn recall(query: &str) -> Result<Vec<Hit>, LunarisError>` | recall across the whole archive |
 | `channel` | `fn channel(id: impl Into<String>) -> SlackArchiveQuery` | narrow to one channel (no I/O — deferred to `SlackArchiveQuery::recall`) |
@@ -54,13 +54,15 @@ Shaped after `slack_archive_channel_filter_parity` in
 
 ```rust,no_run
 use std::sync::Arc;
-use lunaris::Lunaris;
+use lunaris::{Lunaris, Scope};
 use lunaris_recipes::conversational::SlackArchive;
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
     let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
-    let archive = SlackArchive::new(lunaris.clone());
+    // The partition every recipe below reads and writes in.
+    let scope = Scope::new("acme-workspace")?;
+    let archive = SlackArchive::new(lunaris.clone(), scope.clone());
 
     // Bulk-ingest a workspace export, message by message.
     archive.ingest_channel("general", "U_ALICE", "Standup in 5, room Helios.").await?;
@@ -88,7 +90,7 @@ thread-scoped email archive with an opt-in graph builder.
 
 | Method | Signature | Notes |
 |---|---|---|
-| `new` | `fn new(lunaris: Arc<Lunaris>) -> Self` | **no prefix arg** — rooted at `email:thread/` |
+| `new` | `fn new(lunaris: Arc<Lunaris>, scope: Scope, scope: Scope) -> Self` | **no prefix arg** — rooted at `email:thread/` |
 | `ingest` | `async fn ingest(root_id: impl Into<String>, from: impl Into<String>, body: impl Into<String>) -> Result<Lsn, LunarisError>` | one email into thread `root_id`, authored by `from` |
 | `thread` | `fn thread(root_id: impl Into<String>) -> EmailThreading` | returns a **narrowed `Self`** scoped at `email:thread/<root_id>/` — the `Filter::StartsWith` on `source` does the narrowing (fully wired) |
 | `recall` | `async fn recall(query: &str) -> Result<Vec<Hit>, LunarisError>` | recall across the current scope (whole archive, or one thread on a narrowed handle) |
@@ -101,16 +103,18 @@ Shaped after `email_threading_graph_off_parity` /
 
 ```rust,no_run
 use std::sync::Arc;
-use lunaris::Lunaris;
+use lunaris::{Lunaris, Scope};
 use lunaris_recipes::conversational::EmailThreading;
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
     let lunaris = Arc::new(Lunaris::open("moon://127.0.0.1:6380").await?);
+    // The partition every recipe below reads and writes in.
+    let scope = Scope::new("acme-workspace")?;
 
     // Opt in to the sender/recipient graph BEFORE ingest if you want edges
     // (the extractor runs inside the ingest hot path, not after the fact).
-    let email = EmailThreading::new(lunaris.clone()).with_graph_pipeline(true);
+    let email = EmailThreading::new(lunaris.clone(), scope.clone()).with_graph_pipeline(true);
 
     email.ingest("RFC-0042", "alice@example.com", "Proposing the new retention sweep.").await?;
     email.ingest("RFC-0042", "bob@example.com",   "+1, but let's cap it at 90 days.").await?;
@@ -138,7 +142,7 @@ attendee-narrowed recall and the same graph toggle.
 
 | Method | Signature | Notes |
 |---|---|---|
-| `new` | `fn new(lunaris: Arc<Lunaris>) -> Self` | **no prefix arg** — rooted at `meeting:notes/` |
+| `new` | `fn new(lunaris: Arc<Lunaris>, scope: Scope, scope: Scope) -> Self` | **no prefix arg** — rooted at `meeting:notes/` |
 | `note` | `async fn note(heading: impl Into<String>, body: impl Into<String>) -> Result<Lsn, LunarisError>` | one note under `heading`; participant defaults to `"scribe"` |
 | `recall` | `async fn recall(query: &str) -> Result<Vec<Hit>, LunarisError>` | recall across the meeting corpus |
 | `attendees` | `fn attendees(attendees: Vec<String>) -> MeetingNotesQuery` | narrow to notes attributed to `attendees` — **takes an owned `Vec<String>`**, not `&[&str]` |
@@ -154,13 +158,15 @@ Shaped after `meeting_notes_memory_transcript_parity`:
 
 ```rust,no_run
 use std::sync::Arc;
-use lunaris::Lunaris;
+use lunaris::{Lunaris, Scope};
 use lunaris_recipes::conversational::MeetingNotesMemory;
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
     let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
-    let notes = MeetingNotesMemory::new(lunaris.clone());
+    // The partition every recipe below reads and writes in.
+    let scope = Scope::new("acme-workspace")?;
+    let notes = MeetingNotesMemory::new(lunaris.clone(), scope.clone());
 
     notes.note("2025-05-12 / Roadmap", "Decided to ship the 90-day retention cap in v2.").await?;
     notes.note("2025-05-12 / Roadmap", "Action item: Alice to write the migration doc.").await?;

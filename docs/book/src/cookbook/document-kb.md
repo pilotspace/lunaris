@@ -13,7 +13,7 @@ and there is no business logic of its own.
 
 | Method | Signature | Notes |
 |---|---|---|
-| `new` | `fn new(lunaris: Arc<Lunaris>, source_prefix: impl Into<String>) -> Self` | binds the inner `DocumentCorpus` to `source_prefix` (e.g. `"kb:docs/"`) |
+| `new` | `fn new(lunaris: Arc<Lunaris>, scope: Scope, source_prefix: impl Into<String>) -> Self` | binds the inner `DocumentCorpus` to `source_prefix` (e.g. `"kb:docs/"`) |
 | `ingest` | `async fn ingest(chunks: Vec<(String, serde_json::Map<String, serde_json::Value>)>) -> Result<(), LunarisError>` | each `(content, metadata)` pair → one `Episode` under `{prefix}{ulid}` |
 | `filter` | `fn filter(self, field: impl Into<String>, value: impl Into<serde_json::Value>) -> Self` | adds a `Filter::Eq` on a metadata field; multiple calls AND together; **consumes `self`** |
 | `top` | `fn top(self, k: usize) -> Self` | caps output; default `10`; **consumes `self`** |
@@ -39,14 +39,16 @@ Shaped after `document_knowledge_base_parity_quickstart_rag` in
 
 ```rust,no_run
 use std::sync::Arc;
-use lunaris::Lunaris;
+use lunaris::{Lunaris, Scope};
 use lunaris_recipes::documentary::DocumentKnowledgeBase;
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
     let lunaris = Arc::new(Lunaris::open("moon://127.0.0.1:6380").await?);
+    // The partition every recipe below reads and writes in.
+    let scope = Scope::new("acme-docs")?;
 
-    let kb = DocumentKnowledgeBase::new(lunaris.clone(), "kb:docs/");
+    let kb = DocumentKnowledgeBase::new(lunaris.clone(), scope.clone(), "kb:docs/");
 
     // Ingest pre-chunked content with metadata.
     let chunks = vec![

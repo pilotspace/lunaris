@@ -284,6 +284,12 @@ def _rfc3339_to_unix_ms(s: str) -> int:
 # conftest so there is one definition rather than a copy per suite.
 _TAG = run_tag()
 
+# W4.17 — ONE scope per suite run. This is the axis Moon actually partitions
+# on, applied BELOW any top-k, so it isolates this run from every earlier run
+# and from the TypeScript twin in a way a source prefix cannot (F34: the
+# timeline recipe post-filters its prefix AFTER the root's global `top(30)`).
+_SUITE_SCOPE = f"pydoc-{_TAG}"
+
 # ...and the timeline scenario additionally shifts its VALID-TIME window per
 # run. The prefix alone does not isolate it: `TimelineReconstruction.between`
 # pushes `@valid_time:[lo hi]` down to Moon but filters the prefix in memory
@@ -303,7 +309,7 @@ async def _run_kb_quickstart(
 
     mem = await lunaris.open(url)
     prefix = f"kb:docs/doc-11-03-py/{backend_label}/{_TAG}/"
-    kb = doc_mod.DocumentKnowledgeBase.new(mem, prefix)
+    kb = doc_mod.DocumentKnowledgeBase.new(mem, _SUITE_SCOPE, prefix)
     docs = _load_fixture("document_knowledge_base_docs.json")
     for d in docs:
         meta = {"doc_id": d["id"], "title": d["title"]}
@@ -343,7 +349,7 @@ async def _run_research_paper(
 
     mem = await lunaris.open(url)
     prefix = f"papers:doc-11-03-py/{backend_label}/{_TAG}/"
-    corpus = doc_mod.ResearchPaperCorpus.new(mem, prefix)
+    corpus = doc_mod.ResearchPaperCorpus.new(mem, _SUITE_SCOPE, prefix)
     corpus = corpus.with_graph_pipeline(False)
     papers = _load_fixture("research_paper_corpus_papers.json")
     for p in papers:
@@ -389,7 +395,7 @@ async def _run_code_repo_as_of(
 
     mem = await lunaris.open(url)
     prefix = f"repo:doc-11-03-py/{backend_label}/{_TAG}/"
-    repo = doc_mod.CodeRepoMemory.new(mem, prefix)
+    repo = doc_mod.CodeRepoMemory.new(mem, _SUITE_SCOPE, prefix)
     commits = _load_fixture("code_repo_100_commits.json")
     target = commits[commit_index_0based]
     target_ms = _rfc3339_to_unix_ms(target["committer_date_rfc3339"])
@@ -524,7 +530,7 @@ async def _run_timeline_between(
 
     mem = await lunaris.open(url)
     prefix = f"timeline:doc-11-03-py/{backend_label}/{_TAG}/"
-    timeline = doc_mod.TimelineReconstruction.new(mem, prefix)
+    timeline = doc_mod.TimelineReconstruction.new(mem, _SUITE_SCOPE, prefix)
     events = _load_fixture("timeline_30_days.json")
     for e in events:
         ms = _rfc3339_to_unix_ms(e["valid_time_rfc3339"]) + _WINDOW_OFFSET_MS
@@ -605,32 +611,22 @@ async def _run_customer_support_refund(
     import lunaris
 
     mem = await lunaris.open(url)
-    hist = doc_mod.CustomerSupportHistory.new(mem)
+    hist = doc_mod.CustomerSupportHistory.new(mem, _SUITE_SCOPE)
 
-    # PRECONDITION, not an assertion about the product.
+    # W4.17 retired the PRECONDITION that used to stand here.
     #
-    # `CustomerSupportHistory` takes no source prefix and — like every recipe
-    # in both SDKs — is constructed at `Scope::dev()`
-    # (`crates/lunaris-py/src/generated.rs:718`; 10 such call sites per
-    # binding). So this scenario has NO isolation knob: a previous run's 50
-    # tickets sit in the same scope, under the same sources, and compete for
-    # the same `top(30)`. Measured: after a handful of runs the ticket rows
-    # were crowded out entirely and the assertion below reported
-    # "ticket-prefix hits: expected 0 to be greater than or equal to 1" — which
-    # reads like a recall regression, not a dirty store.
+    # `CustomerSupportHistory` takes no source prefix, and until W4.17 every
+    # recipe binding in both SDKs constructed at `Scope::dev()` — so this
+    # scenario had NO isolation knob at all: a previous run's 50 tickets sat in
+    # the same scope, under the same sources, competing for the same `top(30)`.
+    # Rather than fail three steps downstream as "ticket-prefix hits: expected
+    # 0 to be greater than or equal to 1" (a dirty store that reads like a
+    # recall regression), #184 asserted the requirement out loud.
     #
-    # `run_tag` and `run_window_offset_ms` fix the scenarios that DO have a
-    # knob. This one cannot be fixed from the test side; giving the SDK a
-    # scope-bound path is ship-plan W4.12. Until then, say the requirement out
-    # loud rather than letting it fail three steps downstream.
-    stale = await hist.recall(query)
-    assert not stale, (
-        f"this suite requires a Moon with no previous run's documents in it, and "
-        f"{len(stale)} are already present under `ticket:` / `chat:`. Reset with "
-        f"`bash scripts/ci/reset_moon.sh` (or point LUNARIS_MOON_URL at a fresh "
-        f"Moon) and re-run. Every recipe binding constructs at Scope::dev(), so "
-        f"this scenario has no per-run partition to hide behind — see W4.12."
-    )
+    # It is a real per-run partition now: `_SUITE_SCOPE` above. The tourniquet
+    # came off with the wound. Note what the loud version bought — it turned a
+    # silent wrong answer into a red board on `main` within the hour, which is
+    # what sent someone to fix the cause.
 
     fx = _load_fixture("customer_support_50_tickets.json")
     for t in fx["tickets"]:

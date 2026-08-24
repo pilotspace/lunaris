@@ -259,14 +259,18 @@ fn emit_py_method(
                         // depythonize step is needed.
                         owned_names.push(p.name.clone());
                     }
-                    // N-04 — synthesise Scope inside the binding layer.
-                    // Recipe constructors take `(Arc<Lunaris>, Scope, ...)`;
-                    // SDK callers never see the Scope arg.
+                    // W4.17 — the partition key, surfaced to the caller and
+                    // validated. It used to be synthesised as `Scope::dev()`
+                    // so the SDK never saw it, which meant every recipe in
+                    // every SDK shared ONE partition whatever the caller did.
+                    // Routed through `Scope::new` so a bad scope string is a
+                    // loud error, not a silently-aliasing key.
                     IrTyRef::Scope => {
                         writeln!(
                             out,
-                            "        let {owned_name}: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();",
+                            "        let {owned_name}: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&{param})\n            .map_err(|e| crate::errors::py_err_str(\"VALIDATE\", format!(\"scope: {{e}}\")))?;",
                             owned_name = owned_name,
+                            param = p.name,
                         )
                         .unwrap();
                         owned_names.push(owned_name);
@@ -354,14 +358,18 @@ fn emit_py_method(
                         .unwrap();
                         owned_names.push(owned_name);
                     }
-                    // N-04 — synthesise Scope inside the binding layer.
-                    // Recipe constructors take `(Arc<Lunaris>, Scope, ...)`;
-                    // SDK callers never see the Scope arg.
+                    // W4.17 — the partition key, surfaced to the caller and
+                    // validated. It used to be synthesised as `Scope::dev()`
+                    // so the SDK never saw it, which meant every recipe in
+                    // every SDK shared ONE partition whatever the caller did.
+                    // Routed through `Scope::new` so a bad scope string is a
+                    // loud error, not a silently-aliasing key.
                     IrTyRef::Scope => {
                         writeln!(
                             out,
-                            "        let {owned_name}: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();",
+                            "        let {owned_name}: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&{param})\n            .map_err(|e| crate::errors::py_err_str(\"VALIDATE\", format!(\"scope: {{e}}\")))?;",
                             owned_name = owned_name,
+                            param = p.name,
                         )
                         .unwrap();
                         owned_names.push(owned_name);
@@ -474,14 +482,14 @@ fn emit_py_method(
                             .unwrap();
                             owned_names.push(owned_name);
                         }
-                        // N-04 — synthesise Scope inside the binding layer.
-                        // Recipe constructors take `(Arc<Lunaris>, Scope, ...)`;
-                        // SDK callers never see the Scope arg.
+                        // W4.17 — the partition key, surfaced to the caller
+                        // and validated. See the note on the sibling arm.
                         IrTyRef::Scope => {
                             writeln!(
                             out,
-                            "        let {owned_name}: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();",
+                            "        let {owned_name}: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&{param})\n            .map_err(|e| crate::errors::py_err_str(\"VALIDATE\", format!(\"scope: {{e}}\")))?;",
                             owned_name = owned_name,
+                            param = p.name,
                         )
                         .unwrap();
                             owned_names.push(owned_name);
@@ -574,14 +582,18 @@ fn emit_py_method(
                         .unwrap();
                         owned_names.push(owned_name);
                     }
-                    // N-04 — synthesise Scope inside the binding layer.
-                    // Recipe constructors take `(Arc<Lunaris>, Scope, ...)`;
-                    // SDK callers never see the Scope arg.
+                    // W4.17 — the partition key, surfaced to the caller and
+                    // validated. It used to be synthesised as `Scope::dev()`
+                    // so the SDK never saw it, which meant every recipe in
+                    // every SDK shared ONE partition whatever the caller did.
+                    // Routed through `Scope::new` so a bad scope string is a
+                    // loud error, not a silently-aliasing key.
                     IrTyRef::Scope => {
                         writeln!(
                             out,
-                            "        let {owned_name}: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();",
+                            "        let {owned_name}: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&{param})\n            .map_err(|e| crate::errors::py_err_str(\"VALIDATE\", format!(\"scope: {{e}}\")))?;",
                             owned_name = owned_name,
+                            param = p.name,
                         )
                         .unwrap();
                         owned_names.push(owned_name);
@@ -703,14 +715,18 @@ fn emit_py_method(
                         .unwrap();
                         owned_names.push(owned_name);
                     }
-                    // N-04 — synthesise Scope inside the binding layer.
-                    // Recipe constructors take `(Arc<Lunaris>, Scope, ...)`;
-                    // SDK callers never see the Scope arg.
+                    // W4.17 — the partition key, surfaced to the caller and
+                    // validated. It used to be synthesised as `Scope::dev()`
+                    // so the SDK never saw it, which meant every recipe in
+                    // every SDK shared ONE partition whatever the caller did.
+                    // Routed through `Scope::new` so a bad scope string is a
+                    // loud error, not a silently-aliasing key.
                     IrTyRef::Scope => {
                         writeln!(
                             out,
-                            "        let {owned_name}: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();",
+                            "        let {owned_name}: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&{param})\n            .map_err(|e| crate::errors::py_err_str(\"VALIDATE\", format!(\"scope: {{e}}\")))?;",
                             owned_name = owned_name,
+                            param = p.name,
                         )
                         .unwrap();
                         owned_names.push(owned_name);
@@ -797,13 +813,12 @@ fn owned_self_target_ty(type_name: &str, ret_ty: &IrTyRef) -> String {
 
 fn format_params(params: &[IrParam], leading_comma: bool) -> String {
     let mut s = String::new();
-    // N-04 — `Scope` params are synthesised at the call site
-    // (`::lunaris_core::scope::Scope::dev()`); they are deliberately NOT
-    // exposed in the wrapper signature. Skip them when rendering the
-    // SDK-facing param list.
-    let visible: Vec<&IrParam> =
-        params.iter().filter(|p| !matches!(p.ty, IrTyRef::Scope)).collect();
-    for (i, p) in visible.iter().enumerate() {
+    // W4.17 — `Scope` params ARE part of the SDK signature now. They used to
+    // be filtered out here and synthesised as `Scope::dev()` at the call
+    // site, which is why no SDK caller could partition a recipe at all.
+    // Rendered as `String` and validated through `Scope::new` at the call
+    // site, mirroring the Rust signature position for position.
+    for (i, p) in params.iter().enumerate() {
         if leading_comma || i > 0 {
             s.push_str(", ");
         }
@@ -841,11 +856,13 @@ fn py_param_ty(ty: &IrTyRef) -> String {
         // (`&PyLunaris`) directly; the emitter then clones `.inner` (an
         // `Arc`) at the call site. No pythonize round-trip.
         IrTyRef::Handle { name } => format!("&Py{name}"),
-        // N-04 — `Scope` is synthesised in the binding layer and NOT exposed
-        // to the SDK caller. `format_params` filters Scope out of the wrapper
-        // signature so this arm is defensive: a sentinel string that would
-        // cause a loud Rust compile error if it ever escaped the filter.
-        IrTyRef::Scope => "<<SCOPE_SHOULD_BE_FILTERED>>".to_string(),
+        // W4.17 — the partition key crosses the FFI as a plain string and is
+        // validated by `Scope::new` at the call site. It is deliberately NOT
+        // a `&Bound<'_, PyAny>` wrapping the `Scope` pyclass: the recipe
+        // constructors are `#[staticmethod]`s on generated types, and taking
+        // the validated newtype here would force every caller to import
+        // `lunaris.Scope` before touching a recipe.
+        IrTyRef::Scope => "String".to_string(),
     }
 }
 

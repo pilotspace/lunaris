@@ -79,7 +79,7 @@ and exposes:
 
 | Method | Signature | Notes |
 |---|---|---|
-| `new` | `fn new(lunaris: Arc<Lunaris>, thread_prefix: impl Into<String>) -> Self` | binds the prefix |
+| `new` | `fn new(lunaris: Arc<Lunaris>, scope: Scope, thread_prefix: impl Into<String>) -> Self` | binds the prefix |
 | `with_top_k` | `fn with_top_k(self, k: usize) -> Self` | builder knob; default `8` |
 | `ingest` | `async fn ingest(message, thread_id, participant_id) -> Result<Lsn, LunarisError>` | one message → one `Episode` under `{prefix}{thread_id}/`; `thread_id` + `participant_id` land in `Episode.metadata` |
 | `recall` | `async fn recall(query: &str) -> Result<Vec<Hit>, LunarisError>` | fuses `Vector + Keyword` via RRF(k=60), filters to the prefix, then blends an **ACT-R base-level activation** score (Anderson 1996, `d = 0.5`) with the fused RRF score so more-recent messages rank higher |
@@ -108,7 +108,7 @@ RAG primitive. It binds an `Arc<Lunaris>` to a *source prefix*
 
 | Method | Signature | Notes |
 |---|---|---|
-| `new` | `fn new(lunaris: Arc<Lunaris>, source_prefix: impl Into<String>) -> Self` | binds the prefix |
+| `new` | `fn new(lunaris: Arc<Lunaris>, scope: Scope, source_prefix: impl Into<String>) -> Self` | binds the prefix |
 | `ingest` | `async fn ingest(chunks: Vec<(String, serde_json::Map<String, serde_json::Value>)>) -> Result<(), LunarisError>` | each `(content, metadata)` pair → one `Episode` under `{prefix}{ulid}` |
 | `filter` | `fn filter(self, field: impl Into<String>, value: impl Into<serde_json::Value>) -> Self` | adds a `Filter::Eq` on a metadata field; multiple calls AND together |
 | `top` | `fn top(self, k: usize) -> Self` | caps output; default `10` |
@@ -130,7 +130,7 @@ at `cargo check`, not at runtime.
 
 | Method | Signature | Notes |
 |---|---|---|
-| `new` | `fn new(lunaris: Arc<Lunaris>) -> Self` | source `S` is a phantom — no value needed |
+| `new` | `fn new(lunaris: Arc<Lunaris>, scope: Scope, scope: Scope) -> Self` | source `S` is a phantom — no value needed |
 | `as_of` | `fn as_of(self, ts: Hlc) -> Self` | snapshot at `ts` |
 | `before` / `after` | `fn before(self, ts: Hlc) -> Self` / `fn after(self, ts: Hlc) -> Self` | valid-time bounds |
 | `between` | `fn between(self, after: Hlc, before: Hlc) -> Self` | requires `S: SupportsBetween`; panics if `after > before`; range is **`[after, before)`** (lower inclusive, upper exclusive) |
@@ -150,7 +150,7 @@ scratchpad: `(k, v)` pairs stored under `{scope_prefix}{k}` as `Episode`s.
 
 | Method | Signature | Notes |
 |---|---|---|
-| `new` | `fn new(lunaris: Arc<Lunaris>, scope_prefix: impl Into<String>) -> Self` | binds the prefix |
+| `new` | `fn new(lunaris: Arc<Lunaris>, scope: Scope, scope_prefix: impl Into<String>) -> Self` | binds the prefix |
 | `write` | `async fn write(k: &str, v: serde_json::Value) -> Result<Lsn, LunarisError>` | value is JSON, not a bare string |
 | `read` | `async fn read(k: &str) -> Result<Option<serde_json::Value>, LunarisError>` | `None` = no hit |
 | `grep` | `async fn grep(pattern: &str) -> Result<Vec<(String, serde_json::Value)>, LunarisError>` | all pairs whose `source` starts with `{scope_prefix}{pattern}` |

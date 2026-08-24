@@ -19,7 +19,7 @@ on the recall side.
 
 | Method | Signature | Notes |
 |---|---|---|
-| `new` | `fn new(lunaris: Arc<Lunaris>, source_prefix: impl Into<String>) -> Self` | binds the inner corpus (e.g. `"papers:"`) |
+| `new` | `fn new(lunaris: Arc<Lunaris>, scope: Scope, source_prefix: impl Into<String>) -> Self` | binds the inner corpus (e.g. `"papers:"`) |
 | `with_graph_pipeline` | `fn with_graph_pipeline(self, on: bool) -> Self` | `enable()` / `disable()` on the graph handle; idempotent; builder-style; **consumes `self`** |
 | `ingest` | `async fn ingest(chunks: Vec<(String, serde_json::Map<String, serde_json::Value>)>) -> Result<(), LunarisError>` | forwards to `DocumentCorpus::ingest` |
 | `search` | `async fn search(self, query: &str) -> Result<Vec<Hit>, LunarisError>` | forwards to `DocumentCorpus::search`; **consumes `self`** |
@@ -37,15 +37,17 @@ Shaped after `research_paper_corpus_parity_graph_off_recall` in
 
 ```rust,no_run
 use std::sync::Arc;
-use lunaris::Lunaris;
+use lunaris::{Lunaris, Scope};
 use lunaris_recipes::documentary::ResearchPaperCorpus;
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
     let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+    // The partition every recipe below reads and writes in.
+    let scope = Scope::new("acme-research")?;
 
     // Opt in to the citation graph before ingest. Default is OFF.
-    let papers = ResearchPaperCorpus::new(lunaris.clone(), "papers:")
+    let papers = ResearchPaperCorpus::new(lunaris.clone(), scope.clone(), "papers:")
         .with_graph_pipeline(true);
 
     let chunks = vec![
@@ -86,7 +88,7 @@ metadata; recall time-travels via `TemporalQuery::<Documents>::as_of`.
 
 | Method | Signature | Notes |
 |---|---|---|
-| `new` | `fn new(lunaris: Arc<Lunaris>, repo_prefix: impl Into<String>) -> Self` | binds the inner corpus (e.g. `"repo:lunaris/"`) |
+| `new` | `fn new(lunaris: Arc<Lunaris>, scope: Scope, repo_prefix: impl Into<String>) -> Self` | binds the inner corpus (e.g. `"repo:lunaris/"`) |
 | `ingest_commit` | `async fn ingest_commit(commit_sha: impl Into<String>, committer_date_unix_ms: i64, chunks: Vec<(String, serde_json::Map<String, serde_json::Value>)>) -> Result<(), LunarisError>` | stamps `commit_sha` + `committer_date_unix_ms` into each chunk's metadata, then forwards to `DocumentCorpus::ingest` (1 primitive call) |
 | `recall` | `async fn recall(query: &str, as_of: Hlc) -> Result<Vec<Hit>, LunarisError>` | 2 primitive calls: `TemporalQuery::<Documents>::new` + `.as_of(ts).execute(query)` |
 
@@ -110,14 +112,16 @@ Shaped after `code_repo_memory_as_of_commit_50_round_trip_moon_postgres` in
 
 ```rust,no_run
 use std::sync::Arc;
-use lunaris::Lunaris;
+use lunaris::{Lunaris, Scope};
 use lunaris_core::hlc::Hlc;
 use lunaris_recipes::documentary::CodeRepoMemory;
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
     let lunaris = Arc::new(Lunaris::open("moon://127.0.0.1:6380").await?);
-    let repo = CodeRepoMemory::new(lunaris.clone(), "repo:lunaris/");
+    // The partition every recipe below reads and writes in.
+    let scope = Scope::new("acme-research")?;
+    let repo = CodeRepoMemory::new(lunaris.clone(), scope.clone(), "repo:lunaris/");
 
     // Commit A — first version of the function.
     let commit_a_ms: i64 = 1_715_000_000_000; // committer date, Unix-ms

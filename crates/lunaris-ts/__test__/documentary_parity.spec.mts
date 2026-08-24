@@ -259,6 +259,12 @@ type Hit = { id: unknown; source: string; text: string; [k: string]: unknown };
 // `run_tag.mts` so there is one definition rather than a copy per suite.
 const TAG = runTag();
 
+// W4.17 — ONE scope per suite run. This is the axis Moon actually partitions
+// on, applied BELOW any top-k, so it isolates this run from every earlier run
+// and from the Python twin in a way a source prefix cannot (F34: the timeline
+// recipe post-filters its prefix AFTER the root's global `top(30)`).
+const SUITE_SCOPE = `tsdoc-${TAG}`;
+
 // ...and the timeline scenario additionally shifts its VALID-TIME window per
 // run. The prefix alone does not isolate it: `TimelineReconstruction.between`
 // pushes `@valid_time:[lo hi]` down to Moon but filters the prefix in memory
@@ -279,7 +285,7 @@ async function runKbQuickstart(
   const l = lunaris as Record<string, any>;
   const mem = await l.open(url_);
   const prefix = `kb:docs/doc-11-03-ts/${backendLabel}/${TAG}/`;
-  let kb = l.DocumentKnowledgeBase.new(mem, prefix);
+  let kb = l.DocumentKnowledgeBase.new(mem, SUITE_SCOPE, prefix);
   const docs = loadFixture<{ id: string; title: string; body: string }[]>(
     "document_knowledge_base_docs.json",
   );
@@ -300,7 +306,7 @@ async function runResearchPaper(
   const l = lunaris as Record<string, any>;
   const mem = await l.open(url_);
   const prefix = `papers:doc-11-03-ts/${backendLabel}/${TAG}/`;
-  let corpus = l.ResearchPaperCorpus.new(mem, prefix);
+  let corpus = l.ResearchPaperCorpus.new(mem, SUITE_SCOPE, prefix);
   corpus = corpus.withGraphPipeline(false);
   const papers = loadFixture<{ id: string; title: string; abstract: string }[]>(
     "research_paper_corpus_papers.json",
@@ -323,7 +329,7 @@ async function runCodeRepoAsOf(
   const l = lunaris as Record<string, any>;
   const mem = await l.open(url_);
   const prefix = `repo:doc-11-03-ts/${backendLabel}/${TAG}/`;
-  const repo = l.CodeRepoMemory.new(mem, prefix);
+  const repo = l.CodeRepoMemory.new(mem, SUITE_SCOPE, prefix);
   const commits = loadFixture<
     { sha: string; committer_date_rfc3339: string; function_body_chunk: string }[]
   >("code_repo_100_commits.json");
@@ -348,7 +354,7 @@ async function runTimelineBetween(
   const l = lunaris as Record<string, any>;
   const mem = await l.open(url_);
   const prefix = `timeline:doc-11-03-ts/${backendLabel}/${TAG}/`;
-  const timeline = l.TimelineReconstruction.new(mem, prefix);
+  const timeline = l.TimelineReconstruction.new(mem, SUITE_SCOPE, prefix);
   const events = loadFixture<{ id: string; valid_time_rfc3339: string; text: string }[]>(
     "timeline_30_days.json",
   );
@@ -371,35 +377,22 @@ async function runCustomerSupportRefund(
 ): Promise<[string, unknown][]> {
   const l = lunaris as Record<string, any>;
   const mem = await l.open(url_);
-  const hist = l.CustomerSupportHistory.new(mem);
+  const hist = l.CustomerSupportHistory.new(mem, SUITE_SCOPE);
 
-  // PRECONDITION, not an assertion about the product.
+  // W4.17 retired the PRECONDITION that used to stand here.
   //
-  // `CustomerSupportHistory` takes no source prefix and — like every recipe in
-  // both SDKs — is constructed at `Scope::dev()`
-  // (`crates/lunaris-ts/src/generated.rs:227`; 10 such call sites per binding).
-  // So this scenario has NO isolation knob: a previous run's 50 tickets sit in
-  // the same scope, under the same sources, and compete for the same
-  // `top(30)`. Measured: after a handful of runs the ticket rows were crowded
-  // out entirely and the assertion downstream reported "ticket-prefix hits:
-  // expected 0 to be greater than or equal to 1" — which reads like a recall
-  // regression, not a dirty store.
+  // `CustomerSupportHistory` takes no source prefix, and until W4.17 every
+  // recipe binding in both SDKs constructed at `Scope::dev()` — so this
+  // scenario had NO isolation knob at all: a previous run's 50 tickets sat in
+  // the same scope, under the same sources, competing for the same `top(30)`.
+  // Rather than fail three steps downstream as "ticket-prefix hits: expected 0
+  // to be greater than or equal to 1" (a dirty store that reads like a recall
+  // regression), #184 asserted the requirement out loud.
   //
-  // `runTag` and `runWindowOffsetMs` fix the scenarios that DO have a knob.
-  // This one cannot be fixed from the test side; giving the SDK a scope-bound
-  // path is ship-plan W4.12. Until then, say the requirement out loud rather
-  // than letting it fail three steps downstream.
-  const stale = (await hist.recall(query)) as Hit[];
-  if (stale.length > 0) {
-    throw new Error(
-      `this suite requires a Moon with no previous run's documents in it, and ` +
-        `${stale.length} are already present under \`ticket:\` / \`chat:\`. Reset ` +
-        `with \`bash scripts/ci/reset_moon.sh\` (or point LUNARIS_MOON_URL at a ` +
-        `fresh Moon) and re-run. Every recipe binding constructs at ` +
-        `Scope::dev(), so this scenario has no per-run partition to hide ` +
-        `behind — see W4.12.`,
-    );
-  }
+  // It is a real per-run partition now: `SUITE_SCOPE` above. The tourniquet
+  // came off with the wound. Note what the loud version bought — it turned a
+  // silent wrong answer into a red board on `main` within the hour, which is
+  // what sent someone to fix the cause.
 
   const fx = loadFixture<{
     tickets: { id: string; body: string }[];

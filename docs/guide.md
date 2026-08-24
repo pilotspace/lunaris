@@ -614,9 +614,12 @@ The v0 Helios harness consumes Lunaris through this one recipe. In v0.1.1 the fi
 use std::sync::Arc;
 
 use lunaris::{CodingSessionMemory, Hlc};
+use lunaris::Scope;
+
+let scope = Scope::new("acme-prod")?;   // RFC 0001 partition key
 
 let lunaris = Arc::new(lunaris::Lunaris::open("moon://localhost:6380").await?);
-let pad     = CodingSessionMemory::new(lunaris.clone(), "session-42");
+let pad     = CodingSessionMemory::new(lunaris.clone(), scope.clone(), "session-42");
 
 // write(path, content) — ingest with source = "helios:fs/session-42/<path>".
 pad.write("README.md", "# Hello\nWorld").await?;
@@ -658,8 +661,11 @@ Recency-weighted message recall with ACT-R base-level activation (Anderson 1996,
 
 ```rust
 use lunaris_recipes::MessageStream;
+use lunaris::Scope;
 
-let chat = MessageStream::new(lunaris.clone(), "chat:user_42/").with_top_k(10);
+let scope = Scope::new("acme-prod")?;   // RFC 0001 partition key
+
+let chat = MessageStream::new(lunaris.clone(), scope.clone(), "chat:user_42/").with_top_k(10);
 chat.ingest("hello world", "thread-1", "user_42").await?;
 let hits = chat.recall("hello").await?;
 ```
@@ -672,8 +678,11 @@ RRF-fused Vector + Keyword RAG over a `source_prefix`-scoped document set. Sourc
 
 ```rust
 use lunaris_recipes::DocumentCorpus;
+use lunaris::Scope;
 
-let kb = DocumentCorpus::new(lunaris.clone(), "kb:docs/");
+let scope = Scope::new("acme-prod")?;   // RFC 0001 partition key
+
+let kb = DocumentCorpus::new(lunaris.clone(), scope.clone(), "kb:docs/");
 kb.ingest(vec![
     ("# Spec\nthe quick brown fox".into(), serde_json::Map::new()),
 ]).await?;
@@ -697,10 +706,13 @@ Typestate-parameterised time-travel combinator. `S` is `Messages | Documents | F
 ```rust
 use lunaris_core::hlc::Hlc;
 use lunaris_recipes::{Documents, TemporalQuery};
+use lunaris::Scope;
+
+let scope = Scope::new("acme-prod")?;   // RFC 0001 partition key
 
 // as_of — point-in-time recall.
 let t0 = Hlc { wall_ms: 1_700_000_000_000, counter: 0, node_id: 0 };
-let hits = TemporalQuery::<Documents>::new(lunaris.clone())
+let hits = TemporalQuery::<Documents>::new(lunaris.clone(), scope.clone())
     .as_of(t0)
     .execute("schema v1")
     .await?;
@@ -708,13 +720,13 @@ let hits = TemporalQuery::<Documents>::new(lunaris.clone())
 // between(lo, hi) — closed-open range recall. hi is EXCLUSIVE.
 let lo = Hlc { wall_ms: 1_700_000_000_000, counter: 0, node_id: 0 };
 let hi = Hlc { wall_ms: 1_700_086_400_000, counter: 0, node_id: 0 };
-let events = TemporalQuery::<Documents>::new(lunaris.clone())
+let events = TemporalQuery::<Documents>::new(lunaris.clone(), scope.clone())
     .between(lo, hi)
     .execute("what happened")
     .await?;
 
 // before / after — open-ended ranges via Filter::ValidTimeRange { after, before }.
-let old = TemporalQuery::<Documents>::new(lunaris.clone())
+let old = TemporalQuery::<Documents>::new(lunaris.clone(), scope.clone())
     .before(t0)
     .execute("legacy config")
     .await?;
@@ -728,8 +740,11 @@ Scope-prefixed scratchpad with an explicit promotion hook. Source: `crates/lunar
 
 ```rust
 use lunaris::WorkingMemory;  // re-exported from lunaris-recipes too
+use lunaris::Scope;
 
-let wm = WorkingMemory::new(lunaris.clone(), "chat:user_42/");
+let scope = Scope::new("acme-prod")?;   // RFC 0001 partition key
+
+let wm = WorkingMemory::new(lunaris.clone(), scope.clone(), "chat:user_42/");
 wm.write("last_topic", serde_json::json!({"t": "memory"})).await?;
 let v = wm.read("last_topic").await?;
 let matches = wm.grep("memory").await?;
@@ -750,20 +765,26 @@ All under `lunaris_recipes::conversational`. Each is a thin composition — ≤ 
 
 ```rust
 use lunaris_recipes::conversational::ChatAgentMemory;
+use lunaris::Scope;
 
-let chat = ChatAgentMemory::new(lunaris.clone(), "user_42");  // scope "chat:user_42/"
+let scope = Scope::new("acme-prod")?;   // RFC 0001 partition key
+
+let chat = ChatAgentMemory::new(lunaris.clone(), scope.clone(), "user_42");  // scope "chat:user_42/"
 chat.remember("what's my name?").await?;
 let hits = chat.recall("my name").await?;
 ```
 
-Public surface: `new(lunaris, user_id)`, `remember(turn)`, `recall(query)`. Holds both a `MessageStream` and a `WorkingMemory` scoped at `"chat:<user_id>/"` (the same prefix so `MultiTurnConversation` can consolidate without cross-user leaks).
+Public surface: `new(lunaris, scope, user_id)`, `remember(turn)`, `recall(query)`. Holds both a `MessageStream` and a `WorkingMemory` scoped at `"chat:<user_id>/"` (the same prefix so `MultiTurnConversation` can consolidate without cross-user leaks).
 
 #### `MultiTurnConversation` — `ChatAgentMemory` + consolidation
 
 ```rust
 use lunaris_recipes::conversational::MultiTurnConversation;
+use lunaris::Scope;
 
-let convo = MultiTurnConversation::new(lunaris.clone(), "user_42");
+let scope = Scope::new("acme-prod")?;   // RFC 0001 partition key
+
+let convo = MultiTurnConversation::new(lunaris.clone(), scope.clone(), "user_42");
 convo.remember("user", "hi").await?;    // (participant, body)
 convo.remember("bot", "hello").await?;
 let hits = convo.recall("greeting").await?;
@@ -776,8 +797,11 @@ Public surface: `new`, `remember(participant, body)`, `recall(query)`, `consolid
 
 ```rust
 use lunaris_recipes::conversational::SlackArchive;
+use lunaris::Scope;
 
-let slack = SlackArchive::new(lunaris.clone());
+let scope = Scope::new("acme-prod")?;   // RFC 0001 partition key
+
+let slack = SlackArchive::new(lunaris.clone(), scope.clone());
 slack.ingest_channel("C-general", "alice", "shipping today").await?;
 
 // Narrow to a channel → returns a fresh SlackArchive bound at "slack:archive/channel=C-general/".
@@ -795,8 +819,11 @@ Public surface: `new`, `ingest_channel(channel, user, body)`, `recall(query)`, `
 
 ```rust
 use lunaris_recipes::conversational::EmailThreading;
+use lunaris::Scope;
 
-let mail = EmailThreading::new(lunaris.clone()).with_graph_pipeline(true);
+let scope = Scope::new("acme-prod")?;   // RFC 0001 partition key
+
+let mail = EmailThreading::new(lunaris.clone(), scope.clone()).with_graph_pipeline(true);
 mail.ingest("thread-1", "alice@x", "subject body").await?;
 let hits = mail.thread("thread-1").recall("subject").await?;
 ```
@@ -807,8 +834,11 @@ Public surface: `new`, `ingest(root_id, from, body)`, `thread(root_id)`, `recall
 
 ```rust
 use lunaris_recipes::conversational::MeetingNotesMemory;
+use lunaris::Scope;
 
-let mtg = MeetingNotesMemory::new(lunaris.clone()).with_graph_pipeline(true);
+let scope = Scope::new("acme-prod")?;   // RFC 0001 partition key
+
+let mtg = MeetingNotesMemory::new(lunaris.clone(), scope.clone()).with_graph_pipeline(true);
 mtg.note("Q2 planning", "discussed roadmap and staffing").await?;
 let hits = mtg.recall("staffing").await?;
 
@@ -829,8 +859,11 @@ All under `lunaris_recipes::documentary`. Each composes `DocumentCorpus` and/or 
 
 ```rust
 use lunaris_recipes::documentary::DocumentKnowledgeBase;
+use lunaris::Scope;
 
-let kb = DocumentKnowledgeBase::new(lunaris.clone(), "kb:docs/");
+let scope = Scope::new("acme-prod")?;   // RFC 0001 partition key
+
+let kb = DocumentKnowledgeBase::new(lunaris.clone(), scope.clone(), "kb:docs/");
 kb.ingest(vec![
     ("# Onboarding\nStart here.".into(), serde_json::Map::new()),
 ]).await?;
@@ -847,8 +880,11 @@ Public surface: `new`, `ingest(chunks)`, `filter(field, value)`, `top(k)`, `sear
 
 ```rust
 use lunaris_recipes::documentary::ResearchPaperCorpus;
+use lunaris::Scope;
 
-let papers = ResearchPaperCorpus::new(lunaris.clone(), "papers:")
+let scope = Scope::new("acme-prod")?;   // RFC 0001 partition key
+
+let papers = ResearchPaperCorpus::new(lunaris.clone(), scope.clone(), "papers:")
     .with_graph_pipeline(true);        // opt-in citation graph
 papers.ingest(chunks).await?;
 let hits = papers.search("attention is all you need").await?;
@@ -861,8 +897,11 @@ Public surface: `new`, `with_graph_pipeline(bool)`, `ingest(chunks)`, `search(qu
 ```rust
 use lunaris_core::hlc::Hlc;
 use lunaris_recipes::documentary::CodeRepoMemory;
+use lunaris::Scope;
 
-let repo = CodeRepoMemory::new(lunaris.clone(), "repo:lunaris/");
+let scope = Scope::new("acme-prod")?;   // RFC 0001 partition key
+
+let repo = CodeRepoMemory::new(lunaris.clone(), scope.clone(), "repo:lunaris/");
 // Ingest one commit; wrapper stamps commit_sha + committer_date_unix_ms.
 repo.ingest_commit(
     "ae7b60e",
@@ -882,8 +921,11 @@ Public surface: `new`, `ingest_commit(commit_sha, committer_date_unix_ms, chunks
 ```rust
 use lunaris_core::hlc::Hlc;
 use lunaris_recipes::documentary::TimelineReconstruction;
+use lunaris::Scope;
 
-let timeline = TimelineReconstruction::new(lunaris.clone(), "timeline:events/");
+let scope = Scope::new("acme-prod")?;   // RFC 0001 partition key
+
+let timeline = TimelineReconstruction::new(lunaris.clone(), scope.clone(), "timeline:events/");
 timeline.ingest(chunks).await?;
 
 let start = Hlc { wall_ms: day_0_ms, counter: 0, node_id: 0 };
@@ -899,8 +941,11 @@ Public surface: `new`, `ingest(chunks)`, `between(query, lo, hi)`, `as_of(query,
 
 ```rust
 use lunaris_recipes::documentary::CustomerSupportHistory;
+use lunaris::Scope;
 
-let hist = CustomerSupportHistory::new(lunaris.clone())
+let scope = Scope::new("acme-prod")?;   // RFC 0001 partition key
+
+let hist = CustomerSupportHistory::new(lunaris.clone(), scope.clone())
     .with_graph_pipeline(true);       // opt-in product-customer relations
 hist.ingest_ticket("T-101", chunks).await?;
 hist.ingest_chat("T-101", "customer", "app crashes on start").await?;

@@ -10,6 +10,8 @@ Tests are split into two groups:
 """
 from __future__ import annotations
 
+import uuid
+
 import pytest
 import lunaris
 
@@ -218,3 +220,88 @@ async def test_scoped_dsl_returns_a_builder_that_can_be_composed(
             f"scoped.dsl() returned a builder with no callable `{name}` — "
             f"this is the frozen codegen stub, not the working builder"
         )
+
+
+# ---------------------------------------------------------------------------
+# W4.17 — recipes are partitionable
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_recipe_binds_its_partition(moon_backend_url: str) -> None:
+    """Two recipe instances on different scopes must not see each other.
+
+    Both use the SAME `user_id` on purpose. A recipe's source prefix
+    (`chat:<user>/`) is its OTHER discriminator, and if the two instances
+    differed there the test would pass on the prefix alone and prove nothing
+    about the scope. Same user, different scope: the partition key is the only
+    thing that can separate them.
+
+    Before W4.17 every recipe binding in both SDKs minted `Scope::dev()`, so
+    there was no scope argument to pass and this test could not be written.
+    """
+    from lunaris.conversational import ChatAgentMemory
+
+    tag = uuid.uuid4().hex[:10]
+    user = f"w417-{tag}"
+    handle = await lunaris.open(moon_backend_url)
+
+    # Tagged so a previous run's rows — different scope, SAME store — cannot
+    # satisfy either assertion.
+    a_text = f"Alice loves chocolate cake ({tag})."
+    b_text = f"Bob also loves chocolate cake ({tag})."
+
+    cam_a = ChatAgentMemory.new(handle, f"w417a-{tag}", user)
+    cam_b = ChatAgentMemory.new(handle, f"w417b-{tag}", user)
+    await cam_a.remember(a_text)
+    await cam_b.remember(b_text)
+
+    # CONTROL first, through the native scoped path (not the recipe). It reads
+    # the SAME partition with the SAME query, so it separates "this build has
+    # no usable embedder" from "the recipe is bound to the wrong partition".
+    # A bare `if not texts: skip` cannot tell those apart, and the second is
+    # exactly the defect this test exists to catch.
+    control = await handle.scoped(lunaris.Scope(f"w417a-{tag}")).recall(
+        "chocolate cake"
+    )
+    control_texts = [
+        h.get("text", "") if isinstance(h, dict) else "" for h in control
+    ]
+    if a_text not in control_texts:
+        pytest.skip(
+            "the control recall could not see its own row either — no usable "
+            f"embedder in this build; control returned {control_texts}"
+        )
+
+    hits = await cam_a.recall("chocolate cake")
+    texts = [h.get("text", "") if isinstance(h, dict) else "" for h in hits]
+    # POSITIVE: scope a's own row. An instance bound to the WRONG partition
+    # still returns other rows, so exclusion alone would pass while reading
+    # somebody else's data.
+    assert a_text in texts, (
+        f"the recipe did not return its own scope's row — it is bound to some "
+        f"other partition: {texts}"
+    )
+    # NEGATIVE: b_text is deliberately near-identical, so it outranks
+    # everything else in the store for this query.
+    assert b_text not in texts, (
+        f"the recipe escaped its partition and returned scope b's row: {texts}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_recipe_refuses_an_invalid_scope(moon_backend_url: str) -> None:
+    """A bad scope string must be refused at construction, loudly.
+
+    `:` is the KV-format delimiter and is rejected by the scope alphabet, so
+    accepting it here would let one scope byte-alias another's keyspace.
+    """
+    from lunaris.conversational import ChatAgentMemory
+
+    handle = await lunaris.open(moon_backend_url)
+    with pytest.raises(Exception) as excinfo:
+        ChatAgentMemory.new(handle, "w417:colon", "user-1")
+    assert "scope" in str(excinfo.value).lower(), (
+        f"the refusal must name the scope so the caller knows which argument "
+        f"was wrong; got {excinfo.value!r}"
+    )
