@@ -1,0 +1,35 @@
+# Every `#[ignore]` / `#[cfg_attr(..., ignore)]` in crates/ must appear here.
+# Enforced by scripts/ratchet-parked-tests.py (ci.yml `check` job).
+#
+#   RUN_BY     <job / step that passes --include-ignored or enables the feature>
+#   NEVER_RUN  <why nothing runs it — this is the honest inventory>
+#
+# A parked test that no job un-parks is present, green, and asserting nothing.
+# Adding one is a decision; this file is where you record it.
+#
+# Format: <file>::<test-fn>  RUN_BY|NEVER_RUN  <detail>
+
+# --- un-parked: integration.yml "integration (Moon + moon-it)" job ---------
+# `cargo test -p lunaris-storage-moon --features moon-it -- --include-ignored`
+# (package-wide, so every parked test in the crate runs).
+crates/lunaris-storage-moon/tests/list_scopes.rs::list_scopes_returns_all_seeded_scopes_under_test_prefix RUN_BY integration.yml / storage-moon step (package-wide --include-ignored)
+crates/lunaris-storage-moon/tests/list_scopes.rs::list_scopes_pagination_cursor_continuity RUN_BY integration.yml / storage-moon step (package-wide --include-ignored)
+crates/lunaris-storage-moon/tests/list_scopes.rs::list_scopes_dedupe_across_primitive_kinds RUN_BY integration.yml / storage-moon step (package-wide --include-ignored)
+crates/lunaris-storage-moon/tests/list_scopes.rs::list_scopes_limit_zero_short_circuits RUN_BY integration.yml / storage-moon step (package-wide --include-ignored)
+crates/lunaris-storage-moon/tests/scope_isolation.rs::cross_scope_kv_keys_are_disjoint RUN_BY integration.yml / storage-moon step (package-wide --include-ignored)
+
+# `cargo test -p lunaris-memory --test <named targets> -- --include-ignored`.
+# NOTE the named-target list is the coverage boundary: a new parked test in an
+# UNNAMED target of this package silently runs nowhere. F39 was exactly that —
+# phase_14_1_reflect_invalidate had to be added to the list by hand.
+crates/lunaris/tests/coding_session_memory_smoke.rs::helios_chat_10k_turns_dual_backend RUN_BY integration.yml / lunaris-memory step (--test coding_session_memory_smoke)
+crates/lunaris/tests/coding_session_memory_smoke.rs::helios_doc_rag_50k_md_dual_backend RUN_BY integration.yml / lunaris-memory step (--test coding_session_memory_smoke)
+crates/lunaris/tests/coding_session_memory_smoke.rs::coding_session_memory_v2_delegation_round_trip RUN_BY integration.yml / lunaris-memory step (--test coding_session_memory_smoke)
+crates/lunaris/tests/consolidator_scope_isolation.rs::consolidator_scope_isolation_dual_backend_live RUN_BY integration.yml / lunaris-memory step (--test consolidator_scope_isolation)
+
+# --- runs nowhere ---------------------------------------------------------
+crates/lunaris/tests/chaos_helios_sigkill.rs::chaos_sigkill_helios_flow_zero_orphans NEVER_RUN 50x2 SIGKILL live run; wall-clock will not fit integration.yml's 8-minute budget. Deliberate — documented in the workflow.
+crates/lunaris/tests/lazy_reranker_rss.rs::open_does_not_materialize_gguf_into_rss NEVER_RUN needs LUNARIS_RERANKER_GGUF + LUNARIS_RERANKER_DIR staged AND a release profile; no job stages the reranker artifacts.
+crates/lunaris-ingest/src/chunker/token.rs::bpe_counter_differs_from_surrogate_for_known_input NEVER_RUN needs GRANITE_R2_TOKENIZER_PATH; no job stages a granite tokenizer.json.
+crates/lunaris-ingest/tests/ingest_pipeline.rs::community_hits_carry_summary_metadata_for_bm25 NEVER_RUN pins an OPEN Lunaris gap (port-plan §6 item 6), not a missing fixture: vector_search hydrates VectorHit.metadata from KV on only 1 of its 3 return paths, so communities BM25 content is empty on Moon. Un-park with the fix, not by relaxing it.
+crates/lunaris-bench/tests/binary_size_gate.rs::lunaris_server_release_binary_under_35_mib NEVER_RUN parked behind feature ci-perf-gates, which NO workflow enables; scripts/check-binary-size.sh wraps it but no workflow calls the script either. See ship-plan.

@@ -37,14 +37,28 @@ use std::path::PathBuf;
 const CEILING_BYTES: u64 = 35 * 1024 * 1024;
 
 fn release_binary_path() -> PathBuf {
-    // Workspace target root resolved relative to this crate's manifest dir
-    // (`crates/lunaris-bench/`). This is portable across host OSes — the
-    // executable suffix on Windows is `.exe` (not a supported CI target
-    // for the v0.4 native stack, but we resolve correctly anyway).
-    let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    p.pop(); // crates/
-    p.pop(); // workspace root
-    p.push("target");
+    // `CARGO_TARGET_DIR` moves build output, so a hardcoded `<workspace>/target`
+    // diverges from where `cargo build --release` actually wrote the binary and
+    // the gate fails with "missing release binary" instead of measuring one.
+    // That is not hypothetical: this repo's own working convention sets the
+    // variable, and `scripts/check-binary-size.sh` had to be run with
+    // `env -u CARGO_TARGET_DIR` before this fix. Read at RUNTIME (`env::var`),
+    // not compile time — a cached test binary must not bake in the path.
+    //
+    // Falls back to the workspace target root resolved relative to this crate's
+    // manifest dir (`crates/lunaris-bench/`). Portable across host OSes — the
+    // executable suffix on Windows is `.exe` (not a supported CI target for the
+    // v0.4 native stack, but we resolve correctly anyway).
+    let mut p = match std::env::var_os("CARGO_TARGET_DIR") {
+        Some(dir) => PathBuf::from(dir),
+        None => {
+            let mut w = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            w.pop(); // crates/
+            w.pop(); // workspace root
+            w.push("target");
+            w
+        }
+    };
     p.push("release");
     if cfg!(windows) {
         p.push("lunaris-server.exe");
