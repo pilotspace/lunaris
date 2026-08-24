@@ -256,6 +256,33 @@ jobs:
       # `lunaris try` works — the trial downloads a 253 MB GGUF and runs local
       # inference, which is not something to put on every release leg. See
       # "WHAT IS NOT YET PROVEN" in the header.
+      - name: Check binary size
+        # Deliberately NOT attached to the smoke step below, and deliberately
+        # WITHOUT its `if: matrix.cross != true`. That guard exists because a
+        # cross-built aarch64-linux binary cannot EXECUTE on an x86_64 runner —
+        # but measuring a file's size does not execute it. Riding the smoke
+        # step would have left every cross-built leg unmeasured while looking
+        # fully covered, which is the failure shape this repo keeps finding.
+        #
+        # `lunaris` carries `--features embedded-moon` and is the largest
+        # artifact shipped: 21.12 MiB measured on macOS arm64. The ceiling is
+        # loose on purpose — see the equivalent step in mcp-prebuild.yml for
+        # why, and note the script always reports the measured size into the
+        # job summary so a real per-target baseline accumulates.
+        shell: bash
+        env:
+          MATRIX_TARGET: ${{ matrix.target }}
+          IS_WINDOWS: ${{ runner.os == 'Windows' }}
+        run: |
+          set -euo pipefail
+          OUTDIR="target/${MATRIX_TARGET}/release"
+          if [[ "${IS_WINDOWS}" == "true" ]]; then
+            BINARY="${OUTDIR}/lunaris.exe"
+          else
+            BINARY="${OUTDIR}/lunaris"
+          fi
+          python3 scripts/check-binary-size.py "${BINARY}" 48 "lunaris cli (${MATRIX_TARGET})"
+
       - name: Smoke — the binary starts
         if: matrix.cross != true
         shell: bash

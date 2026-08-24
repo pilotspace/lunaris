@@ -32,8 +32,26 @@
 
 use std::path::PathBuf;
 
-/// Hard ceiling. Baseline measurement is ~27 MiB; an additional 8 MiB
-/// allows for a single medium-sized dep without breaking CI.
+/// Hard ceiling.
+///
+/// The documented baseline used to read "~27 MiB ... an additional 8 MiB allows
+/// for a single medium-sized dep". Measured 2026-08-24 on macOS arm64:
+/// **11.56 MiB** — less than half that, so the ceiling sits at roughly 3x the
+/// real value and would not catch a doubling. Nothing noticed the drift because
+/// this test had never run: its `ci-perf-gates` feature is enabled by no
+/// workflow, and `scripts/check-binary-size.sh` (whose own header calls itself
+/// a "CI gate") is invoked by none either.
+///
+/// The ceiling is left at 35 MiB rather than tightened, deliberately. Binary
+/// size is platform-dependent and 11.56 MiB is one host on one OS; the "~27
+/// MiB" figure may well have been accurate on Linux. Tighten from a real
+/// cross-platform baseline, not from a laptop.
+///
+/// Note also what this gate does NOT cover: `lunaris-server` is not a shipped
+/// artifact and no workflow builds it in release. The binaries users download
+/// are `lunaris` (npx / cargo install) and `lunaris-mcp` (npx / uvx), both
+/// gated now by `scripts/check-binary-size.py` in `cli-release.yml` and
+/// `mcp-prebuild.yml`.
 const CEILING_BYTES: u64 = 35 * 1024 * 1024;
 
 fn release_binary_path() -> PathBuf {
