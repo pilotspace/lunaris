@@ -57,7 +57,19 @@ module.exports.__version__ = require("./package.json").version;
 // the idiomatic ergonomic form rather than the free-function form.
 if (native.Lunaris && native.lunarisScoped) {
   native.Lunaris.prototype.scoped = function (scope) {
-    return native.lunarisScoped(this, scope);
+    const scoped = native.lunarisScoped(this, scope);
+    // W4.12 — the Rust `ScopedLunaris.dsl()` hands back the codegen-FROZEN
+    // `generated::RetrievalBuilder`, which has no `query` and no `execute`:
+    // every scoped DSL call ended in `.query is not a function`. Shadow it on
+    // the instance with the WORKING builder, pre-bound to the handle AND to
+    // the scope, so `handle.scoped(s).dsl()` composes and executes inside the
+    // partition. Twin of `python/lunaris/__init__.py::_scoped`.
+    const handle = this;
+    const bound = String(scope);
+    scoped.dsl = function () {
+      return new RetrievalBuilder(handle).withScope(bound);
+    };
+    return scoped;
   };
 }
 
@@ -125,23 +137,35 @@ function _inheritHandle(src) {
   return src._handle ?? null;
 }
 
+/** Read `_scope` off a chained-from value. W4.12 — the scope has to ride the
+ * WHOLE chain: every operator method below returns a NEW builder, so a scope
+ * dropped at that boundary reaches the engine unbound the moment the caller
+ * writes `.query(...)`, reading another partition while looking exactly like
+ * a scoped call at the call site. */
+function _inheritScope(src) {
+  return src._scope ?? null;
+}
+
 class _Composable {
   and(other) {
     return RetrievalBuilder._fromNode(
       new _OpNode("and", [], [this._node, other._node]),
       _inheritHandle(this),
+      _inheritScope(this),
     );
   }
   fuseRrf(k) {
     return RetrievalBuilder._fromNode(
       new _OpNode("fuse_rrf", [Number(k)], [this._node]),
       _inheritHandle(this),
+      _inheritScope(this),
     );
   }
   top(n) {
     return RetrievalBuilder._fromNode(
       new _OpNode("top", [Number(n)], [this._node]),
       _inheritHandle(this),
+      _inheritScope(this),
     );
   }
   /** Set the query text the plan searches for — the TS spelling of the Rust
@@ -152,6 +176,7 @@ class _Composable {
     return RetrievalBuilder._fromNode(
       new _OpNode("query", [String(text)], [this._node]),
       _inheritHandle(this),
+      _inheritScope(this),
     );
   }
   asOf(wallMs) {
@@ -159,6 +184,7 @@ class _Composable {
     return RetrievalBuilder._fromNode(
       new _OpNode("as_of", [ms], [this._node]),
       _inheritHandle(this),
+      _inheritScope(this),
     );
   }
   filter(pred) {
@@ -175,12 +201,14 @@ class _Composable {
     return RetrievalBuilder._fromNode(
       new _OpNode("filter", [s], [this._node]),
       _inheritHandle(this),
+      _inheritScope(this),
     );
   }
   filterStr(s) {
     return RetrievalBuilder._fromNode(
       new _OpNode("filter", [String(s)], [this._node]),
       _inheritHandle(this),
+      _inheritScope(this),
     );
   }
 }
@@ -216,23 +244,33 @@ class Graph extends _Composable {
 }
 
 class RetrievalBuilder extends _Composable {
-  constructor(handle) {
+  constructor(handle, scope) {
     super();
     // Default root is Vector("chunks", 30) — matches the Rust
     // RetrievalBuilder::new default (crates/lunaris-retrieve/src/builder.rs:82).
     this._node = new _OpNode("vector", ["chunks", 30]);
     this._handle = handle ?? null;
+    this._scope = scope === undefined || scope === null ? null : String(scope);
   }
 
-  static _fromNode(node, handle) {
+  static _fromNode(node, handle, scope) {
     const rb = new RetrievalBuilder();
     rb._node = node;
     rb._handle = handle ?? null;
+    rb._scope = scope === undefined || scope === null ? null : String(scope);
     return rb;
   }
 
   bind(handle) {
     this._handle = handle;
+    return this;
+  }
+
+  /** Bind this plan to a partition. Returns `this` for chaining.
+   * `handle.scoped(s).dsl()` applies this for you; call it directly only when
+   * composing by hand off the unscoped `handle.recall()`. */
+  withScope(scope) {
+    this._scope = String(scope);
     return this;
   }
 
@@ -242,7 +280,11 @@ class RetrievalBuilder extends _Composable {
         "RetrievalBuilder.execute() needs a handle; use handle.recall() or builder.bind(handle) first",
       );
     }
-    return native.recallSimpleExecute(this._handle, _collapsePlan(this._node));
+    const plan = _collapsePlan(this._node);
+    if (this._scope !== null) {
+      plan.scope = this._scope;
+    }
+    return native.recallSimpleExecute(this._handle, plan);
   }
 }
 

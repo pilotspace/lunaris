@@ -22,7 +22,10 @@
 // generated counterparts (`Vector`, `Keyword`, `Graph`, `RetrievalBuilder`).
 export * from "./index.js";
 
-import type { Lunaris as NativeLunaris } from "./index.js";
+import type {
+  Lunaris as NativeLunaris,
+  ScopedLunaris as NativeScopedLunaris,
+} from "./index.js";
 
 /**
  * A handle returned by {@link open}.
@@ -36,7 +39,7 @@ export interface LunarisHandle extends Omit<NativeLunaris, "recall"> {
   /** A {@link RetrievalBuilder} pre-bound to this handle. */
   recall(): RetrievalBuilder;
   /** Multi-agent partition view over this handle (RFC 0001). */
-  scoped(scope: unknown): unknown;
+  scoped(scope: unknown): ScopedHandle;
   /** Graph-extraction pipeline toggle. */
   graphPipeline: GraphPipelineHandleExt;
   /** ACT-R consolidator toggle. */
@@ -155,11 +158,26 @@ export declare class Graph extends Composable {
  * ```
  */
 export declare class RetrievalBuilder extends Composable {
-  constructor(handle?: NativeLunaris);
+  constructor(handle?: NativeLunaris, scope?: unknown);
   /** Attach a handle so `.execute()` has storage access. Returns `this`. */
   bind(handle: NativeLunaris): RetrievalBuilder;
+  /** Bind the plan to a partition. Returns `this`. */
+  withScope(scope: unknown): RetrievalBuilder;
   /** Run the plan. Throws if no handle was bound. */
   execute(): Promise<Hit[]>;
+}
+
+/**
+ * A partition view returned by {@link LunarisHandle.scoped}.
+ *
+ * Structurally the generated `ScopedLunaris`, minus `dsl()`, which
+ * `lunaris.cjs` rebinds to the working {@link RetrievalBuilder} pre-bound to
+ * BOTH the handle and this scope — the generated one is the same codegen stub
+ * `recall()` was, with no `query` and no `execute` (W4.12).
+ */
+export interface ScopedHandle extends Omit<NativeScopedLunaris, "dsl"> {
+  /** A {@link RetrievalBuilder} bound to this handle AND this partition. */
+  dsl(): RetrievalBuilder;
 }
 
 /**

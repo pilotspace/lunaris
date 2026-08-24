@@ -386,7 +386,7 @@ export declare class SlackArchiveQuery {
   recall(query: string): Promise<Array<any>>
 }
 
-/** Timeline-reconstruction wrapper. Two-call composition of DocumentCorpus + `TemporalQuery<Documents>`. */
+/** Timeline-reconstruction wrapper. Two-call composition of DocumentCorpus + TemporalQuery<Documents>. */
 export declare class TimelineReconstruction {
   /** Construct bound to `source_prefix`. */
   static new(lunaris: Lunaris, sourcePrefix: string): TimelineReconstruction
@@ -541,12 +541,14 @@ export declare function openHandle(url: string): Promise<Lunaris>
  * Minimal `recall` execute bridge for the TS-side DSL.
  *
  * Accepts a plan JSON of shape:
- * `{"query": "...", "k": 5, "index": "chunks", "filter": "...", "as_of_ms": 123}`.
- * All keys are optional. `root` is the operator tree documented on
- * `lunaris_retrieve::plan`; when it is absent the flat pre-F14 fields
- * (`index`, `k`) are read instead and normalized into the equivalent
- * one-leg `vector` tree. Missing fields fall back to
- * `{query: "", k: 5, index: "chunks"}`. Returns a JSON array of hit
- * objects which napi-rs 3.x converts to a `Promise<Array<object>>` in TS.
+ * `{"root": {...}, "query": "...", "filter": "...", "as_of_ms": 123,
+ * "scope": "acme-agent-1"}`, where
+ * `root` is the operator tree documented on `lunaris_retrieve::plan`.
+ * All keys are optional. When `root` is absent the flat pre-F14 fields
+ * (`index`, `k`) are read instead and normalized into the equivalent one-leg
+ * `vector` tree, so the two spellings share one execution path. Missing
+ * fields fall back to `{query: "", k: 5, index: "chunks"}`. Returns a JSON
+ * array of hit objects which napi-rs 3.x converts to a
+ * `Promise<Array<object>>` in TS.
  */
 export declare function recallSimpleExecute(handle: Lunaris, plan: any): Promise<any>

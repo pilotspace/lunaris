@@ -80,17 +80,17 @@ class _Composable:
     # `_handle` attribute (Vector / Keyword / Graph don't define one).
     def and_(self, other: "_Composable") -> "RetrievalBuilder":
         node = _OpNode("and", (), (self._node, other._node))
-        return RetrievalBuilder._from_node(node, _inherit_handle(self))
+        return RetrievalBuilder._from_node(node, _inherit_handle(self), _inherit_scope(self))
 
     and_op = and_
 
     def fuse_rrf(self, k: int) -> "RetrievalBuilder":
         node = _OpNode("fuse_rrf", (int(k),), (self._node,))
-        return RetrievalBuilder._from_node(node, _inherit_handle(self))
+        return RetrievalBuilder._from_node(node, _inherit_handle(self), _inherit_scope(self))
 
     def top(self, n: int) -> "RetrievalBuilder":
         node = _OpNode("top", (int(n),), (self._node,))
-        return RetrievalBuilder._from_node(node, _inherit_handle(self))
+        return RetrievalBuilder._from_node(node, _inherit_handle(self), _inherit_scope(self))
 
     def query(self, text: str) -> "RetrievalBuilder":
         """Set the query text the plan searches for.
@@ -103,11 +103,11 @@ class _Composable:
             handle.recall().query("what does Alice like?").top(5).execute()
         """
         node = _OpNode("query", (str(text),), (self._node,))
-        return RetrievalBuilder._from_node(node, _inherit_handle(self))
+        return RetrievalBuilder._from_node(node, _inherit_handle(self), _inherit_scope(self))
 
     def as_of(self, wall_ms: int) -> "RetrievalBuilder":
         node = _OpNode("as_of", (int(wall_ms),), (self._node,))
-        return RetrievalBuilder._from_node(node, _inherit_handle(self))
+        return RetrievalBuilder._from_node(node, _inherit_handle(self), _inherit_scope(self))
 
     def filter(self, pred: Optional[str] = None, **kwargs: Any) -> "RetrievalBuilder":
         """Either positional `filter("source = 'x'")` OR keyword
@@ -122,11 +122,24 @@ class _Composable:
             pieces.append(f"{key} = '{val}'")
         combined = " AND ".join(pieces)
         node = _OpNode("filter", (combined,), (self._node,))
-        return RetrievalBuilder._from_node(node, _inherit_handle(self))
+        return RetrievalBuilder._from_node(node, _inherit_handle(self), _inherit_scope(self))
 
     def filter_str(self, s: str) -> "RetrievalBuilder":
         node = _OpNode("filter", (str(s),), (self._node,))
-        return RetrievalBuilder._from_node(node, _inherit_handle(self))
+        return RetrievalBuilder._from_node(node, _inherit_handle(self), _inherit_scope(self))
+
+
+def _inherit_scope(src: "_Composable") -> Optional[str]:
+    """Return `src._scope` if present (RetrievalBuilder instances), else None.
+
+    W4.12 — the scope has to ride the WHOLE chain, not just the first link.
+    `handle.scoped(s).dsl()` hands back a bound builder, and every operator
+    method below returns a NEW builder; a scope that is not carried across
+    that boundary is dropped the moment the caller writes `.query(...)`, and
+    the plan reaches the engine unscoped — reading another partition while
+    looking exactly like a scoped call at the call site.
+    """
+    return getattr(src, "_scope", None)
 
 
 def _inherit_handle(src: "_Composable") -> Optional[Any]:
@@ -164,23 +177,39 @@ class RetrievalBuilder(_Composable):
     `.execute()`. `handle.recall()` returns a pre-bound `RetrievalBuilder`
     whose `.execute()` runs the plan against the handle's storage."""
 
-    def __init__(self, handle: Optional[Any] = None) -> None:
+    def __init__(self, handle: Optional[Any] = None, scope: Optional[Any] = None) -> None:
         # Empty builder defaults to Vector("chunks", 30) per the Rust-side
         # `RetrievalBuilder::new` default (crates/lunaris-retrieve/src/builder.rs:82).
         self._node = _OpNode("vector", ("chunks", 30))
         self._handle = handle
+        self._scope = None if scope is None else str(scope)
 
     @classmethod
-    def _from_node(cls, node: _OpNode, handle: Optional[Any] = None) -> "RetrievalBuilder":
+    def _from_node(
+        cls,
+        node: _OpNode,
+        handle: Optional[Any] = None,
+        scope: Optional[Any] = None,
+    ) -> "RetrievalBuilder":
         rb = cls.__new__(cls)
         rb._node = node
         rb._handle = handle
+        rb._scope = None if scope is None else str(scope)
         return rb
 
     def bind(self, handle: Any) -> "RetrievalBuilder":
         """Attach this builder to a Lunaris handle so `.execute()` has
         storage access. Returns self for chaining."""
         self._handle = handle
+        return self
+
+    def with_scope(self, scope: Any) -> "RetrievalBuilder":
+        """Bind this plan to a partition. Returns self for chaining.
+
+        `handle.scoped(s).dsl()` applies this for you; call it directly only
+        when composing a builder by hand off the unscoped `handle.recall()`.
+        """
+        self._scope = str(scope)
         return self
 
     async def execute(self) -> list:
@@ -193,6 +222,8 @@ class RetrievalBuilder(_Composable):
                 "or builder.bind(handle) first"
             )
         plan: dict = _collapse_plan(self._node)
+        if self._scope is not None:
+            plan["scope"] = self._scope
         return await _recall_simple_execute(self._handle, plan)
 
 

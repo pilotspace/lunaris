@@ -43,7 +43,8 @@ use crate::errors::py_err;
 /// Minimal `recall` execute bridge.
 ///
 /// Accepts a plan dict of shape
-/// `{"root": {...}, "query": "...", "filter": "...", "as_of_ms": 123}`, where
+/// `{"root": {...}, "query": "...", "filter": "...", "as_of_ms": 123,
+/// "scope": "acme-agent-1"}`, where
 /// `root` is the operator tree documented on
 /// [`lunaris_retrieve::plan`]. All keys are optional.
 ///
@@ -97,6 +98,16 @@ fn recall_simple_execute<'py>(
         Some(v) => Some(v.extract()?),
         None => None,
     };
+    // W4.12 — the partition key. Envelope-level for the same reason `filter`
+    // is: one scope narrows every leg of the plan. Absent means the caller
+    // composed from the unscoped `handle.recall()`, and the engine falls back
+    // to `Scope::dev()` with its own warning; a `scope` here comes from
+    // `handle.scoped(s).dsl()` and MUST reach `with_scope` or the DSL silently
+    // reads another tenant's partition.
+    let scope_str: Option<String> = match plan.get_item("scope")? {
+        Some(v) => Some(v.extract()?),
+        None => None,
+    };
 
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
         // Build the operator tree on the Rust side from the plan the SDK
@@ -104,7 +115,13 @@ fn recall_simple_execute<'py>(
         // because they are builder state in Rust too, not retrievers.
         let root = ::lunaris::retriever_from_json(&root_json)
             .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("plan: {e}")))?;
-        let mut builder = inner.recall().with_root_boxed(root);
+        let mut builder = inner.recall();
+        if let Some(s) = scope_str {
+            let scope = ::lunaris::Scope::new(&s)
+                .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
+            builder = builder.with_scope(scope);
+        }
+        let mut builder = builder.with_root_boxed(root);
         if let Some(s) = filter_str_opt {
             builder = builder
                 .filter_str(&s)
