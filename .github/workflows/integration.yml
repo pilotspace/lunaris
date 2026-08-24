@@ -378,9 +378,9 @@ jobs:
         # idempotency guard. Fixing the probe without wiring the test in here
         # would put it straight back to never running.
         #
-        # `chaos_helios_sigkill` is deliberately NOT here: its live arm is a
-        # 50-iteration SIGKILL run and would not fit this job's budget. It
-        # remains un-run in CI — tracked, not forgotten.
+        # `chaos_helios_sigkill` runs in its OWN step below rather than in this
+        # `--test` list — it SIGKILLs child processes, so it is isolated from
+        # the suites here.
         if: success() || failure()
         run: |
           cargo test -p lunaris-memory \
@@ -388,6 +388,52 @@ jobs:
             --test coding_session_memory_smoke \
             --test consolidator_scope_isolation \
             --test phase_14_1_reflect_invalidate \
+            --no-fail-fast \
+            -- --include-ignored
+
+      - name: Reset Moon (fresh data dir)
+        run: bash scripts/ci/reset_moon.sh
+
+      - name: Run the SIGKILL chaos gate (zero orphans)
+        # Parked since it was written, on a reason that measurement contradicts.
+        # The `#[ignore]` read "50x2 SIGKILL live run — real wall-clock cost is
+        # the blocker ... deliberately outside the 8-minute integration budget",
+        # and this workflow repeated the claim.
+        #
+        # The "8-minute budget" was never a cap — it is this job's OBSERVED
+        # duration (7.8-8.7 min). The job carries `timeout-minutes: 25`, so
+        # there is ~16 min of headroom. The "50x2" also predates the 0.7.0
+        # Postgres deletion that removed the second backend, so the run is half
+        # what the text assumed.
+        #
+        # Measured 2026-08-24, live Moon, debug profile:
+        #
+        #   50 iters (the default): 83 / 184 / 128 / 114 / 126 s  -> mean ~127s
+        #   20 iters (wired here):   56 /  46 /  45 s             -> mean  ~49s
+        #
+        # Quote the spread, not the best sample: the first 50-iter run was 83s
+        # and the next was 184s, so a single measurement would have understated
+        # this by 2x. 20 iters is chosen because it is both cheaper AND far
+        # tighter (45-56s), which matters more than the mean for a step sharing
+        # a job budget. At a conservative 3x runner slowdown that is ~2.5 min,
+        # putting the job around 11 min against the 25 min timeout.
+        #
+        # It earns that: this is the only test exercising the atomicity claim
+        # under real process death — SIGKILL mid-flow, then assert zero orphaned
+        # records. Everything else asserts the happy path. Halving iterations
+        # halves the interleavings sampled PER RUN, but it now runs on every
+        # integration build instead of never, so cumulative coverage goes from
+        # zero to substantial.
+        #
+        # If a runner proves slower still, lower `LUNARIS_CHAOS_HELIOS_ITERS`
+        # rather than re-parking: a reduced-iteration chaos run still detects a
+        # non-atomic write, it just samples fewer interleavings.
+        if: success() || failure()
+        env:
+          LUNARIS_CHAOS_HELIOS_ITERS: 20
+        run: |
+          cargo test -p lunaris-memory \
+            --test chaos_helios_sigkill \
             --no-fail-fast \
             -- --include-ignored
 
