@@ -56,10 +56,14 @@ download are all defined in `vendor/moon/install.sh:1-11` and
 latest tag through GitHub's `releases/latest` redirect
 (`vendor/moon/install.sh:62-75`) — fine for a laptop, **pin it in production**.
 
-Verify:
+Verify. Moon has **no version flag** (`--version` and `-V` are both
+rejected), so confirm the binary runs and then read the version off a running
+server:
 
 ```bash
-moon --version
+moon --help >/dev/null && echo "binary OK"
+# once it is running (see below), the version comes over the wire:
+redis-cli -h 127.0.0.1 -p 6380 INFO server | grep moon_version
 ```
 
 ### 1b. Container — the ghcr image
