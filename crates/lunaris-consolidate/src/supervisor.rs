@@ -90,11 +90,20 @@ pub const ENV_SCOPE_IDLE_TIMEOUT_MS: &str = "LUNARIS_SCOPE_IDLE_TIMEOUT_MS";
 ///
 /// # Construction
 ///
-/// ```ignore
+/// ```no_run
+/// use std::sync::Arc;
+/// use lunaris_core::{LunarisError, Scope, StoragePort};
+/// use lunaris_consolidate::{ConsolidateSupervisor, Consolidator};
+///
+/// # async fn demo(
+/// #     storage: Arc<dyn StoragePort>,
+/// #     consolidator: Arc<dyn Consolidator>,
+/// # ) -> Result<(), LunarisError> {
 /// let supervisor = ConsolidateSupervisor::new(storage, consolidator, 8);
 /// supervisor.register_scope(Scope::new("acme.agent-1").unwrap()).await?;
 /// // ... on shutdown:
 /// supervisor.shutdown_all().await;
+/// # Ok(()) }
 /// ```
 pub struct ConsolidateSupervisor {
     storage: Arc<dyn StoragePort>,

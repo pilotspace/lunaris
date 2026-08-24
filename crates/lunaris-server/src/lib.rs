@@ -44,11 +44,19 @@
 //!
 //! ## Construction
 //!
-//! ```ignore
+//! ```no_run
+//! use std::sync::Arc;
+//!
+//! use clap::Parser;
+//! use lunaris_server::config::Config;
+//!
+//! # async fn demo(listener: tokio::net::TcpListener)
+//! #     -> Result<(), Box<dyn std::error::Error>> {
 //! let cfg = Config::parse();
 //! let lunaris = Arc::new(lunaris::Lunaris::open(&cfg.storage).await?);
 //! let app = lunaris_server::build(cfg, lunaris);
 //! axum::serve(listener, app).await?;
+//! # Ok(()) }
 //! ```
 //!
 //! [Lunaris]: https://github.com/lunaris-dev/lunaris

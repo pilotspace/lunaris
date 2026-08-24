@@ -36,12 +36,17 @@
 //!
 //! ## Usage
 //!
-//! ```ignore
+//! ```no_run
+//! use std::sync::Arc;
+//! use lunaris::Lunaris;
 //! use lunaris_recipes::{TemporalQuery, Messages};
+//!
+//! # async fn demo(mem: Arc<Lunaris>, some_ts: lunaris_core::Hlc) -> anyhow::Result<()> {
 //! let hits = TemporalQuery::<Messages>::new(mem)
 //!     .as_of(some_ts)
 //!     .execute("search text")
 //!     .await?;
+//! # Ok(()) }
 //! ```
 //!
 //! ## ≤ 30 LOC public-surface contract (PRIM-03)

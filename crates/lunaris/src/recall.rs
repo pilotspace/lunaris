@@ -52,8 +52,11 @@ impl Lunaris {
     /// the root via [`RetrievalBuilder::with_root`] for the canonical example
     /// from blueprint §8:
     ///
-    /// ```ignore
-    /// let hits = lunaris.recall()
+    /// ```no_run
+    /// use lunaris::{Keyword, Lunaris, LunarisError, Query, Vector};
+    ///
+    /// # async fn demo(engine: Lunaris) -> Result<(), LunarisError> {
+    /// let hits = engine.recall()
     ///     .with_root(Vector::new("chunks", 30)
     ///         .and(Keyword::bm25("chunks", 30))
     ///         .fuse_rrf(60)
@@ -61,23 +64,27 @@ impl Lunaris {
     ///     .filter_str("source LIKE 'helios:fs/%'").unwrap()
     ///     .execute(Query::text("brown fox"))
     ///     .await?;
+    /// # Ok(()) }
     /// ```
     ///
     /// Plan 03-03 graph-aware extension — once `handle.graph_pipeline().enable()`
     /// is called and Episodes have been ingested with extracted Entities,
     /// callers can compose `Graph::anchored` into the same DSL:
     ///
-    /// ```ignore
-    /// use lunaris::{EntityId, Graph, Query, Vector};
+    /// ```no_run
+    /// use lunaris::{EntityId, Graph, Lunaris, LunarisError, Query, Vector};
+    ///
+    /// # async fn demo(engine: Lunaris) -> Result<(), LunarisError> {
     /// let alice = EntityId::from_name_and_type("Alice", "Person");
-    /// let hits = lunaris.recall()
+    /// let hits = engine.recall()
     ///     .with_root(Vector::new("chunks", 30)
-    ///         .and(Graph::anchored(vec![alice], 2))
+    ///         .and(Graph::anchored(vec![(alice, 1.0)], 2))
     ///         .fuse_rrf(60)
-    ///         .rerank(lunaris.reranker())
+    ///         .rerank(engine.reranker())
     ///         .top(5))
     ///     .execute(Query::text("Tell me about Alice"))
     ///     .await?;
+    /// # Ok(()) }
     /// ```
     pub fn recall(&self) -> RetrievalBuilder {
         // Wave 2.5C: bare Lunaris::recall() seeds Scope::dev() for backwards

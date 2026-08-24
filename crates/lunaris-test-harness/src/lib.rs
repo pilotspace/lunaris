@@ -8,7 +8,7 @@
 //!
 //! ## The idiom
 //!
-//! ```ignore
+//! ```no_run
 //! use lunaris_test_harness::open_test_engine;
 //!
 //! #[tokio::test]

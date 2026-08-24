@@ -149,14 +149,18 @@ impl AggregateGroup {
 /// `FT.AGGREGATE`-backed deterministic counting/grouping operator
 /// (Moon-only). See module docs for why this is NOT a [`super::Retriever`].
 ///
-/// ```ignore
+/// ```no_run
+/// use lunaris_core::LunarisError;
+/// use lunaris_retrieve::QueryContext;
 /// use lunaris_retrieve::operators::aggregate::Aggregate;
 ///
+/// # async fn demo(ctx: QueryContext) -> Result<(), LunarisError> {
 /// // "how many episodes per source?"
 /// let groups = Aggregate::count("chunks", "source").execute(&ctx).await?;
 /// for g in &groups {
 ///     println!("{}: {}", g.group_value, g.count_as_u64(&lunaris_retrieve::operators::aggregate::AggregateReducer::Count).unwrap_or(0));
 /// }
+/// # Ok(()) }
 /// ```
 #[derive(Clone, Debug)]
 #[must_use = "Aggregate does nothing until you call .execute(ctx)"]

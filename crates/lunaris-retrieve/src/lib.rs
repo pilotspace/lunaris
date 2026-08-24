@@ -6,7 +6,7 @@
 //!
 //! ## Quick example
 //!
-//! ```ignore
+//! ```no_run
 //! use lunaris_retrieve::{Vector, Keyword, Query, RetrievalBuilder};
 //!
 //! // The DSL composes (no .await needed at construction):

@@ -467,7 +467,7 @@ fn parse_compact_min(raw: Option<&str>) -> usize {
 /// 1. this workstream's own live test can call it directly, and
 /// 2. wiring it into the trait is a single-line addition for whoever
 ///    edits `lib.rs`'s `impl StoragePort for MoonStorage` block:
-///    ```ignore
+///    ```text
 ///    async fn maintenance_hint(&self, scope: &Scope, hint: MaintenanceHint) -> Result<(), StorageError> {
 ///        match hint {
 ///            MaintenanceHint::BulkIngestComplete { vector_upserts } => {

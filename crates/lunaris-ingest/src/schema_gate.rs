@@ -15,16 +15,25 @@
 //! In any code path that builds `VectorUpsert { metadata, .. }` for the
 //! `"chunks"` index, call **before** pushing the op:
 //!
-//! ```rust,ignore
+//! ```no_run
+//! # use lunaris_core::{LunarisError, StorageError};
+//! # use lunaris_ingest::validate_chunk_metadata;
+//! # fn call_site(metadata: serde_json::Value) -> Result<(), LunarisError> {
 //! validate_chunk_metadata(&metadata)
 //!     .map_err(|e| LunarisError::Storage(StorageError::Backend(format!("schema gate: {e}"))))?;
+//! # Ok(()) }
 //! ```
 //!
 //! Or, if you already hold the text value as a `&str`:
 //!
-//! ```rust,ignore
+//! ```no_run
+//! # use lunaris_core::{LunarisError, StorageError};
+//! # use lunaris_ingest::validate_chunk_text;
+//! # struct Chunk { text: String }
+//! # fn call_site(chunk: Chunk) -> Result<(), LunarisError> {
 //! validate_chunk_text(chunk.text.as_str())
 //!     .map_err(|e| LunarisError::Storage(StorageError::Backend(format!("schema gate: {e}"))))?;
+//! # Ok(()) }
 //! ```
 //!
 //! See [Gap 9 / L9] in the Lunaris integration plan and

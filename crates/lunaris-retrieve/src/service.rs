@@ -6,13 +6,28 @@
 //!
 //! ## Construction
 //!
-//! ```ignore
+//! ```no_run
+//! use std::sync::Arc;
+//! use std::time::Duration;
+//!
+//! use lunaris_core::{Embedder, KeywordPort, Scope, StoragePort};
+//! use lunaris_retrieve::{Query, RetrievalService, Retriever};
+//! use tower::{Service, ServiceBuilder, ServiceExt};
+//!
+//! # async fn demo(
+//! #     root: Arc<dyn Retriever>,
+//! #     embedder: Arc<dyn Embedder>,
+//! #     storage: Arc<dyn StoragePort>,
+//! #     keyword: Arc<dyn KeywordPort>,
+//! #     scope: Scope,
+//! # ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 //! let svc = RetrievalService::new(root, embedder, storage, keyword, scope);
 //! let mut wrapped = ServiceBuilder::new()
 //!     .rate_limit(10, Duration::from_secs(1))
 //!     .timeout(Duration::from_secs(5))
 //!     .service(svc);
 //! let hits = wrapped.ready().await?.call(Query::text("foo")).await?;
+//! # Ok(()) }
 //! ```
 
 use std::future::Future;

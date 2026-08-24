@@ -345,14 +345,17 @@ impl Lunaris {
     ///   the embedder's `dim()` through `MoonStorage::connect_with_dim` on
     ///   first open, which is the right time to size the index.
     /// - You want a `NoopEmbedder` at a specific dim:
-    ///   ```ignore
+    ///   ```no_run
     ///   use std::sync::Arc;
-    ///   use lunaris::Lunaris;
+    ///   use lunaris::{Lunaris, LunarisError};
     ///   use lunaris_core::NoopEmbedder;
+    ///
+    ///   # async fn demo() -> Result<(), LunarisError> {
     ///   let handle = Lunaris::open_with_embedder(
     ///       "moon://localhost:6380",
     ///       Arc::new(NoopEmbedder::new(1536)),
     ///   ).await?;
+    ///   # Ok(()) }
     ///   ```
     ///
     /// The reranker / extractor / verifier / consolidator are still
@@ -930,14 +933,16 @@ impl Lunaris {
     ///
     /// ## Example
     ///
-    /// ```ignore
-    /// use lunaris::Lunaris;
+    /// ```no_run
+    /// use lunaris::{Lunaris, LunarisError};
+    ///
+    /// # async fn demo() -> Result<(), LunarisError> {
     /// let engine = Lunaris::open("moon://127.0.0.1:6380").await?;
     /// let page = engine.list_scopes(None, 100, None).await?;
     /// for scope in page.scopes {
     ///     println!("known scope: {scope:?}");
     /// }
-    /// # Ok::<(), lunaris::LunarisError>(())
+    /// # Ok(()) }
     /// ```
     pub async fn list_scopes(
         &self,
@@ -993,17 +998,21 @@ impl Lunaris {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// // Helios force-push detector hands us the abandoned HLC window:
+    /// use lunaris::{Lunaris, LunarisError};
     /// use lunaris_core::Scope;
-    /// let scope = Scope::new("helios:my-worktree").unwrap();
-    /// let count = lunaris.invalidate_range(
+    ///
+    /// # async fn demo(engine: Lunaris) -> Result<(), LunarisError> {
+    /// let scope = Scope::new("helios.my-worktree").unwrap();
+    /// let count = engine.invalidate_range(
     ///     &scope,
     ///     "helios-git@aabbcc",
     ///     1_700_000_000_000,
     ///     1_700_000_100_000,
     /// ).await?;
     /// tracing::info!(count, "invalidated stale recall");
+    /// # Ok(()) }
     /// ```
     pub async fn invalidate_range(
         &self,
@@ -1245,12 +1254,16 @@ impl<'a> ScopedLunaris<'a> {
     /// storage / embedder / keyword Arcs AND this wrapper's scope for
     /// DSL-style query composition.
     ///
-    /// ```ignore
+    /// ```no_run
+    /// use lunaris::{Keyword, Lunaris, LunarisError, Query, Scope, Vector};
+    ///
+    /// # async fn demo(engine: Lunaris, scope: Scope) -> Result<(), LunarisError> {
     /// let hits = engine.scoped(scope)
     ///     .dsl()
     ///     .with_root(Vector::new("chunks", 30).and(Keyword::bm25("chunks", 30)).fuse_rrf(60).top(5))
     ///     .execute(Query::text("brown fox"))
     ///     .await?;
+    /// # Ok(()) }
     /// ```
     pub fn dsl(&self) -> lunaris_retrieve::RetrievalBuilder {
         // Wave 2.5C: pre-seed scope so all operators in the tree use the

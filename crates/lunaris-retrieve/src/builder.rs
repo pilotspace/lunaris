@@ -6,12 +6,18 @@
 //!
 //! ## Pattern — Vector + Keyword (Phase 2)
 //!
-//! ```ignore
-//! let hits = lunaris.recall()
+//! ```no_run
+//! use lunaris_retrieve::{Keyword, Query, RetrievalBuilder, Vector};
+//! use lunaris_core::LunarisError;
+//!
+//! // `Lunaris::recall()` returns exactly this builder.
+//! # async fn demo(recall: RetrievalBuilder) -> Result<(), LunarisError> {
+//! let hits = recall
 //!     .with_root(Vector::new("chunks", 30).and(Keyword::bm25("chunks", 30)).fuse_rrf(60).top(5))
 //!     .filter_str("source LIKE 'helios:fs/'").unwrap()
 //!     .execute(Query::text("brown fox"))
 //!     .await?;
+//! # Ok(()) }
 //! ```
 //!
 //! ## Pattern — Graph-anchored recall (Plan 03-02)
@@ -21,16 +27,26 @@
 //! pre-resolved [`crate::EntityId`]s (from the RETRIEVE-13 planner stub
 //! per D-13) and walks the graph for `hops` BFS steps:
 //!
-//! ```ignore
-//! let hits = lunaris.recall()
+//! ```no_run
+//! use std::sync::Arc;
+//! use lunaris_core::LunarisError;
+//! use lunaris_retrieve::{EntityId, Graph, Query, RetrievalBuilder, Vector};
+//!
+//! # async fn demo(
+//! #     recall: RetrievalBuilder,
+//! #     seeds: Vec<(EntityId, f32)>,
+//! #     reranker: Arc<dyn lunaris_rerank::Reranker>,
+//! # ) -> Result<(), LunarisError> {
+//! let hits = recall
 //!     .with_root(
 //!         Vector::new("chunks", 30)
-//!             .and(Graph::anchored(query_entity_ids, 2))
+//!             .and(Graph::anchored(seeds, 2))
 //!             .fuse_rrf(60)
-//!             .rerank(handle.reranker())
+//!             .rerank(reranker)
 //!             .top(5))
 //!     .execute(Query::text("brown fox"))
 //!     .await?;
+//! # Ok(()) }
 //! ```
 //!
 //! `Graph::anchored(_, hops)` clamps `hops` to `[1, MAX_GRAPH_HOPS=5]`
@@ -244,14 +260,23 @@ impl RetrievalBuilder {
     /// (via `.with_root_boxed`) when both a custom `k_in` AND a threshold
     /// are needed.
     ///
-    /// ```ignore
-    /// let hits = lunaris.recall()
-    ///     .rerank_with_threshold(handle.reranker(), 0.5)
+    /// ```no_run
+    /// use std::sync::Arc;
+    /// use lunaris_core::LunarisError;
+    /// use lunaris_retrieve::{Query, RetrievalBuilder};
+    ///
+    /// # async fn demo(
+    /// #     recall: RetrievalBuilder,
+    /// #     reranker: Arc<dyn lunaris_rerank::Reranker>,
+    /// # ) -> Result<(), LunarisError> {
+    /// let hits = recall
+    ///     .rerank_with_threshold(reranker, 0.5)
     ///     .top(5)
     ///     .execute(Query::text("what did we decide about pricing?"))
     ///     .await?;
     /// // hits.is_empty() == true means "no confident memory" (abstain), not
     /// // "reranker returned zero-relevance results ranked anyway".
+    /// # Ok(()) }
     /// ```
     pub fn rerank_with_threshold(
         self,
@@ -285,11 +310,16 @@ impl RetrievalBuilder {
     /// multi-hop questions that flat chunk retrieval misses at small `k`
     /// benefit from this path.
     ///
-    /// ```ignore
-    /// let hits = lunaris.recall()
+    /// ```no_run
+    /// use lunaris_core::LunarisError;
+    /// use lunaris_retrieve::{Query, RetrievalBuilder};
+    ///
+    /// # async fn demo(recall: RetrievalBuilder) -> Result<(), LunarisError> {
+    /// let hits = recall
     ///     .tree("communities", 5, 1)
     ///     .execute(Query::text("What are the main themes?"))
     ///     .await?;
+    /// # Ok(()) }
     /// ```
     pub fn tree(mut self, index: impl Into<String>, k: usize, depth: usize) -> Self {
         let root = crate::operators::tree::Tree::new(index, k).with_depth(depth);
@@ -306,17 +336,20 @@ impl RetrievalBuilder {
     /// bi-temporal replay stays temporally consistent), otherwise wall-clock
     /// system time.
     ///
-    /// ```ignore
+    /// ```no_run
     /// use std::time::Duration;
-    /// use lunaris_retrieve::{Exp, RecencyConfig, TimeSource};
+    /// use lunaris_core::LunarisError;
+    /// use lunaris_retrieve::{Exp, Query, RecencyConfig, RetrievalBuilder, TimeSource};
     ///
-    /// let hits = lunaris.recall()
+    /// # async fn demo(recall: RetrievalBuilder) -> Result<(), LunarisError> {
+    /// let hits = recall
     ///     .recency(RecencyConfig::new(
     ///         TimeSource::ValidFrom,
     ///         Box::new(Exp::new(Duration::from_secs(86_400 * 7))),
     ///     ))
     ///     .execute(Query::text("acme commitments"))
     ///     .await?;
+    /// # Ok(()) }
     /// ```
     pub fn recency(mut self, config: RecencyConfig) -> Self {
         self.recency_config = Some(config);

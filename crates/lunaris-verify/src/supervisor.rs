@@ -79,11 +79,21 @@ pub const ENV_SCOPE_IDLE_TIMEOUT_MS: &str = "LUNARIS_SCOPE_IDLE_TIMEOUT_MS";
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```no_run
+/// use std::sync::Arc;
+/// use lunaris_core::{HlcClock, LunarisError, Scope, StoragePort};
+/// use lunaris_verify::{Verifier, VerifySupervisor};
+///
+/// # async fn demo(
+/// #     storage: Arc<dyn StoragePort>,
+/// #     verifier: Arc<dyn Verifier>,
+/// #     clock: Arc<HlcClock>,
+/// # ) -> Result<(), LunarisError> {
 /// let supervisor = VerifySupervisor::new(storage, verifier, clock, 8);
 /// supervisor.register_scope(Scope::new("acme.agent-1").unwrap()).await?;
 /// // ... on shutdown:
 /// supervisor.shutdown_all().await;
+/// # Ok(()) }
 /// ```
 pub struct VerifySupervisor {
     storage: Arc<dyn StoragePort>,

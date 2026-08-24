@@ -21,7 +21,7 @@
 //!
 //! ## Trait shape
 //!
-//! ```ignore
+//! ```no_run
 //! use lunaris_llm::{LlmBackend, SchemaConstraint, GenOpts};
 //!
 //! async fn example(backend: &dyn LlmBackend) -> Result<String, lunaris_core::LunarisError> {
