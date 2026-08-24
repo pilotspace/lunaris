@@ -307,24 +307,18 @@ jobs:
             --no-fail-fast \
             -- --include-ignored
 
-      - name: Reset Moon (fresh data dir)
-        # F28: without this the next suite runs against whatever the previous
-        # one left behind, and can report success for something it never
-        # established. FLUSHALL is NOT sufficient — it leaves FT indices
-        # standing, which is exactly what `keyword_bm25` was passing on.
-        run: bash scripts/ci/reset_moon.sh
-
-      - name: Run lunaris-recipes tests with moon-it
-        # MOON_URL is set in the job env, so these run live. (This crate has no
-        # skip sites of its own — checked 2026-08-21 while routing F10; the
-        # earlier "probe_backend skip discipline" note here was stale.)
-        # Separate step from lunaris-conformance so failures are independently
-        # visible in the Actions UI.
-        if: success() || failure()
-        run: |
-          cargo test -p lunaris-recipes \
-            --features moon-it \
-            --no-fail-fast
+      # F36 — a `Run lunaris-recipes tests with moon-it` step used to sit here,
+      # with a dedicated fresh-Moon reset of its own before it. It never ran
+      # anything live. All three of that crate's integration files define their
+      # own in-file mock `StoragePort`, none reads MOON_URL, and the crate
+      # contains zero `#[cfg(feature = "moon-it")]` sites — the feature only
+      # pulled an optional dependency in. The step name, the feature flag and
+      # the step's own comment ("MOON_URL is set in the job env, so these run
+      # live") all promised coverage that did not exist, while `cargo test
+      # --workspace --all-targets` in ci.yml was already running those exact
+      # three files. Removing it costs no coverage and drops a Moon reset that
+      # bought nothing. The now-vacuous `moon-it` feature is deleted from
+      # `crates/lunaris-recipes/Cargo.toml` in the same commit.
 
       - name: Reset Moon (fresh data dir)
         # F28: without this the next suite runs against whatever the previous

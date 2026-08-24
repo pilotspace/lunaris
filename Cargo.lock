@@ -2694,7 +2694,6 @@ dependencies = [
  "lunaris-extract",
  "lunaris-memory",
  "lunaris-retrieve",
- "lunaris-storage-moon",
  "parking_lot",
  "serde",
  "serde_json",
