@@ -129,8 +129,17 @@ fi
 #    and skips it when the platform tarball is unavailable. Verified on 0.7.1 —
 #    the parity guard passes and `npm ci` exits 0 (113 packages).
 #
-#    After the release publishes them, `npm install --package-lock-only` in
-#    crates/lunaris-ts restores the hashes. That is hygiene, not a blocker.
+#    After the release publishes them, run scripts/restore-ts-lock-integrity.sh
+#    to put the hashes back. That is hygiene, not a blocker.
+#
+#    This line used to say "run `npm install --package-lock-only`". DO NOT.
+#    Measured against the real v0.7.1 publish: it printed "found 0
+#    vulnerabilities", exited 0, and left the file BYTE-IDENTICAL. The lock
+#    already names 0.7.1 for all five platform packages, so npm considers the
+#    tree satisfied and does no resolution at all; --prefer-online does not
+#    help, because there is no request to make. The repair only works if the
+#    five entries are DELETED first, which is what the script does — and then
+#    it asserts both fields came back rather than trusting npm's exit code.
 tmp_lock=$(mktemp)
 jq --arg v "$VER" '
   .version = $v

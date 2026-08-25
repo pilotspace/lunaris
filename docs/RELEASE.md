@@ -73,7 +73,23 @@ maturin publish --skip-existing
 cd ../lunaris-ts
 npm publish --access public
 
-# 7. Run smoke tests against the published artifacts (needs a live
+# 7. Restore the TS lockfile integrity hashes (REQUIRED, easy to skip)
+#    bump-version.sh DELETES `resolved` + `integrity` from the five
+#    @pilotspace/lunaris-* platform entries, because both are properties of
+#    a tarball that does not exist until step 6 publishes it. Nothing puts
+#    them back automatically, so main carries a hash-less lockfile until you
+#    run this.
+#
+#    Do NOT reach for `npm install --package-lock-only`. It is a SILENT
+#    NO-OP here: the lock already names the new version for all five
+#    platforms, so npm treats the tree as satisfied, prints "found 0
+#    vulnerabilities", exits 0, and writes nothing. Measured on v0.7.1 — the
+#    file was byte-identical afterwards. The script deletes the five entries
+#    first so npm has real work, then ASSERTS both fields came back.
+./scripts/restore-ts-lock-integrity.sh
+(cd crates/lunaris-ts && npm ci)   # independent check: must exit 0
+
+# 8. Run smoke tests against the published artifacts (needs a live
 #    Moon — storage is Moon-only since 0.7.0)
 make bench-public   # optional
 ```
