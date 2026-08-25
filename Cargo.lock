@@ -2317,13 +2317,18 @@ name = "lunaris-book-tests"
 version = "0.7.1"
 dependencies = [
  "anyhow",
+ "lunaris-bench",
  "lunaris-core",
+ "lunaris-embed-remote",
  "lunaris-memory",
  "lunaris-recipes",
+ "lunaris-retrieve",
+ "lunaris-storage-moon",
  "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "ulid",
 ]
 
 [[package]]

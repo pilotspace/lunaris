@@ -177,11 +177,20 @@ latency difference is meaningful.
 **Lunaris** — `Graph::anchored` composes into the operator tree and resolves
 to a native Moon graph query:
 
-```rust
+```rust,no_run
+# use lunaris::Lunaris;
+# async fn demo() -> Result<(), lunaris::LunarisError> {
+# let mem = Lunaris::open("moon://localhost:6380").await?;
+# let scope = lunaris::Scope::new("acme-workspace")?;
+# let alice_id = lunaris::EntityId::from_name_and_type("Alice", "Person");
+use lunaris::{Graph, Query, Vector};
+
 let hits = mem.scoped(scope)
-    .dsl(Graph::anchored(vec![alice_id], 2).and(Vector::new("chunks", 30)).top(10))
+    .dsl()
+    .with_root(Graph::anchored(vec![(alice_id, 1.0)], 2).and(Vector::new("chunks", 30)).top(10))
     .execute(Query::text("who does Alice work with?"))
     .await?;
+# Ok(()) }
 ```
 
 The same plan from Python — the SDK marshals the operator tree across the FFI

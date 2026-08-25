@@ -27,6 +27,18 @@ lunaris-recipes = { workspace = true }
 # `Scope`, `Hlc` and friends, which a few pages import directly rather than
 # through the `lunaris` re-export.
 lunaris-core = { workspace = true }
+# `docs/operations/external-moon.md` quotes MIN_MOON_VERSION. Depending on the
+# crate lets that fence ASSERT the real constant instead of shadowing it — a
+# mirrored declaration type-checks forever while drifting from the thing it
+# claims to show, which is the exact failure this harness exists to catch.
+lunaris-storage-moon = { workspace = true }
+# Named directly by `docs/guide.md` and `docs/helios-integration.md` fences.
+# Without these the fences fail E0432/E0433 on the crate name — a harness
+# artifact that says nothing about the docs, which is the exact failure mode
+# that made `mdbook test` useless for this job.
+lunaris-retrieve = { workspace = true }
+lunaris-embed-remote = { workspace = true }
+ulid = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 # Every fence that builds a metadata payload or shows a JSON response.
 serde_json = { workspace = true }
@@ -35,3 +47,11 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+# `docs/helios-integration.md` documents `lunaris_bench::build_md_doc_corpus`
+# as the bulk-corpus entry point, so the fence has to name the crate to
+# compile. `default-features = false` is load-bearing: lunaris-bench's
+# `llamacpp` feature forwards to the umbrella, and enabling it here would drag
+# cmake + llama.cpp into a docs build that has no use for either. The crate's
+# own default is already `[]` — this pins it against a future change.
+lunaris-bench = { path = "../lunaris-bench", default-features = false }

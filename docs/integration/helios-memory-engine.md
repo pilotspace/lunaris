@@ -180,7 +180,7 @@ let lunaris = lunaris.with_reranker(new_reranker);
 
 ## 5. Recommended Helios architecture
 
-```
+```text
 crates/helios-memory/
 ├── Cargo.toml
 ├── src/
@@ -968,7 +968,7 @@ Run two Helios instances. A: current config. B: new config. Load-balance 5% → 
 
 ## 16. Metrics to wire
 
-```
+```text
 helios_memory_reload_attempts_total{result="ok|failed"}
 helios_memory_reload_failed_total{reason="dim_mismatch|file_missing|build_failed|other"}
 helios_memory_reload_duration_seconds
