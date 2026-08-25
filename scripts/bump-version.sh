@@ -173,6 +173,32 @@ for ex_manifest in examples/*/Cargo.toml; do
   }
 done
 
+# 8. crates/lunaris-ts/index.js — napi's generated loader hardcodes the version
+#    in its per-platform binding check, 26 times:
+#
+#      if (bindingPackageVersion !== '0.7.1' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK …)
+#        throw new Error(`Native binding package version mismatch, expected 0.7.1 …`)
+#
+#    `napi build` REGENERATES this file, so it is normally correct by accident —
+#    but a bump does not run napi, and nothing else here touched it. Ship 0.7.2
+#    with a 0.7.1 loader and every install with NAPI_RS_ENFORCE_VERSION_CHECK
+#    set throws at require() time, naming a version nobody published.
+#
+#    Fourth instance of the same class as the TS lockfile and the example
+#    lockfiles above: the version lives in more surfaces than the ones a bump
+#    obviously touches. Note this edits `index.js`, NOT the hand-written
+#    `index.mjs` shim — `index.mjs` carries no version at all.
+indexjs="crates/lunaris-ts/index.js"
+if [[ -f "$indexjs" ]]; then
+  echo "-> Bumping $indexjs binding-version checks to $VER"
+  # Match only a full x.y.z inside quotes/backticks, so a coincidental
+  # substring elsewhere in the loader cannot be rewritten.
+  perl -pi -e "s/(?<=')[0-9]+\.[0-9]+\.[0-9]+(?=')/$VER/g; s/expected [0-9]+\.[0-9]+\.[0-9]+/expected $VER/g" "$indexjs"
+else
+  echo "ERROR: $indexjs is missing — napi's generated loader is a version surface" >&2
+  exit 4
+fi
+
 echo "-> Version parity assertion"
 # Rust source-of-truth: root Cargo.toml [workspace.package].version.
 rust_ver=$(grep -A 20 '\[workspace.package\]' Cargo.toml | grep '^version' | head -1 | sed 's/version *= *"\(.*\)".*/\1/')
@@ -243,6 +269,29 @@ for ex_lock in examples/*/Cargo.lock; do
     exit 5
   fi
 done
+
+# napi's loader: every hardcoded binding-version string must be at $VER, and
+# there must still BE some — a regex that silently matched nothing would leave
+# the file stale and this check green.
+indexjs_hits=$(grep -c "'$VER'" "$indexjs" || true)
+# BOTH greps need `|| true` under `set -euo pipefail`. `grep -v` exits 1 when it
+# filters everything out, which is the SUCCESS case here; and `grep -oE` exits 1
+# when the file carries no version strings at all — with `pipefail` that kills
+# the script BEFORE the check below can report it, turning the one mutation this
+# check exists to catch into a bare `exit 1` with no message.
+indexjs_stale=$(
+  { grep -oE "'[0-9]+\.[0-9]+\.[0-9]+'" "$indexjs" || true; } \
+    | { grep -v "'$VER'" || true; } | sort -u | tr '\n' ' '
+)
+if [[ "$indexjs_hits" -lt 1 ]]; then
+  echo "ERROR: $indexjs has no '$VER' binding-version string — the rewrite matched nothing" >&2
+  exit 5
+fi
+if [[ -n "$indexjs_stale" ]]; then
+  echo "ERROR: $indexjs still carries stale binding versions: $indexjs_stale" >&2
+  exit 5
+fi
+echo "  TS index.js binding checks: $indexjs_hits at $VER"
 
 echo "OK: all five surfaces at $VER (and the TS package-lock + example locks)"
 echo "Next: cargo build --workspace --all-targets --all-features; then follow 13-03-HUMAN-UAT.md"
