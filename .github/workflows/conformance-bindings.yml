@@ -32,9 +32,45 @@ name: conformance-bindings
 # gate, and any crates/lunaris/** touch fired it. The SDK parity truth for
 # PRs is `scripts/ci/local-ci.sh full` (maturin+pytest / napi+vitest run
 # locally); main-push + nightly cron keep the post-merge backstop.
+#
+# F31 RULING 2026-08-25 — option (b), a reduced PR variant.
+#
+# The diet decision was right about the cost and wrong about the consequence.
+# Leaving this post-merge means main breaks first: F30 shipped through a green
+# PR and turned main red for four runs, and the fix itself lived in a crate the
+# `paths` filter did not list, so merging it would not have re-run the job that
+# proved it.
+#
+# What is expensive here is NOT the Moon — `integration.yml` already builds one
+# on every PR inside 25 minutes — it is the two RELEASE SDK builds
+# (`maturin develop --release`, `napi build --release`) and the two full
+# binding suites that follow them. The Rust per-driver parity step needs
+# neither: it needs a live Moon and the stub embedder, and it is the step that
+# exercises `lunaris-recipes` / `lunaris-retrieve` / `lunaris-storage-moon`,
+# which is where F26 and F30 both lived.
+#
+# So the PR run keeps Moon + the stub + the Rust driver, and skips both SDK
+# builds, both binding suites, and the whole `offline-smoke` job. The full
+# matrix still runs on main-push and nightly, exactly as the diet intended.
+# Guarded by `scripts/tests/test_pr_variant_still_gates_something.py`, because
+# a reduced job that reduced to nothing would be a green tick meaning nothing.
 on:
   schedule:
     - cron: "15 3 * * *"
+  pull_request:
+    # Same filter as the push trigger below, deliberately: a path worth
+    # re-running the gate for after a merge is worth catching before one.
+    paths:
+      - "crates/lunaris-py/**"
+      - "crates/lunaris-ts/**"
+      - "crates/lunaris-codegen/**"
+      - "crates/lunaris-conformance/**"
+      - "crates/lunaris/**"
+      - "crates/lunaris-core/**"
+      - "crates/lunaris-recipes/**"
+      - "crates/lunaris-retrieve/**"
+      - "crates/lunaris-storage-moon/**"
+      - ".github/workflows/conformance-bindings.yml"
   push:
     branches: [main]
     # The rule: every crate the parity suites EXECUTE, not just the ones that
@@ -124,6 +160,7 @@ jobs:
           cat "$RUNNER_TEMP/moon.log" || true
           exit 1
       - name: Install maturin + pytest
+        if: github.event_name != 'pull_request'
         run: pip install maturin pytest pytest-asyncio python-ulid
       # A deterministic embedder for the WHOLE job.
       #
@@ -177,9 +214,11 @@ jobs:
       # stages one — so the stub wins here and the local runtime wins on a
       # real install. Both paths stay honest.
       - name: Build + install lunaris-py WITH bindings-it + embed-remote
+        if: github.event_name != 'pull_request'
         run: maturin develop --release --features bindings-it,embed-remote
         working-directory: crates/lunaris-py
       - name: npm install + napi build lunaris-ts WITH bindings-it + embed-remote
+        if: github.event_name != 'pull_request'
         run: |
           npm ci --no-audit --no-fund
           npx napi build --platform --release --features bindings-it,embed-remote
@@ -207,10 +246,10 @@ jobs:
       # which fails if a live-Moon binding suite is added and this job is not
       # widened to cover it.
       - name: Python - full binding suite (live Moon)
-        if: success() || failure()
+        if: (success() || failure()) && github.event_name != 'pull_request'
         run: pytest crates/lunaris-py/tests/ -v
       - name: TypeScript - full binding suite (live Moon)
-        if: success() || failure()
+        if: (success() || failure()) && github.event_name != 'pull_request'
         run: npx vitest run --config vitest.config.mts
         working-directory: crates/lunaris-ts
       - name: Dump Moon logs on failure
@@ -233,6 +272,9 @@ jobs:
   offline-smoke:
     name: feature-build smoke (no backend)
     runs-on: ubuntu-latest
+    # Every step past the Moon build is an SDK build or an SDK suite, which is
+    # exactly the cost the F31 ruling keeps off the PR path.
+    if: github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v4
         with:
