@@ -63,6 +63,7 @@ const BUDGET_TABLE: &[BudgetRow] = &[
         label: "moon",
         p50_budget_ns: 50_000_000,
         p99_budget_ns: 110_000_000,
+        known_miss: None,
     },
     // RETRIEVE-11 — recall p50 ≤ 25 ms / p99 ≤ 80 ms, 1M facts. This is the
     // row CLAUDE.md calls the core value contract.
@@ -72,6 +73,21 @@ const BUDGET_TABLE: &[BudgetRow] = &[
         label: "moon",
         p50_budget_ns: 25_000_000,
         p99_budget_ns: 80_000_000,
+        // Measured 2026-08-25 at p50 261.15 ms / p99 274.04 ms on the CI
+        // runner. Ceilings sit ~1.5x above that: high enough not to flake on a
+        // slower runner, low enough that a real regression still lands outside.
+        known_miss: Some(KnownMiss {
+            tracked_as: "pilotspace/moon#718 (see also W4.9 in the ship plan)",
+            p50_ceiling_ns: 400_000_000,
+            p99_ceiling_ns: 450_000_000,
+            why: "measured over a 1M-row index that is never compacted — Moon 0.8.5's merge \
+                  verifier returns 0.0000 forever, and our own MOON_MAX_UNFLUSHED_SEGMENTS=0 \
+                  workaround removes the backpressure that would otherwise stop the bench, so \
+                  every KNN fans out over 20+ unmerged segments on a core-0-pinned shared \
+                  runner. This number is NOT yet evidence of a recall regression. Delete this \
+                  entry after re-measuring on a compacted index; if it is still over, that is a \
+                  real finding and belongs in its own issue.",
+        }),
     },
     // Blueprint §4.1 atomic_write — 3 ms p50 / 12 ms p99.
     BudgetRow {
@@ -80,6 +96,7 @@ const BUDGET_TABLE: &[BudgetRow] = &[
         label: "moon",
         p50_budget_ns: 3_000_000,
         p99_budget_ns: 12_000_000,
+        known_miss: None,
     },
     // INGEST-06 — graph-on ingest p50 ≤ 300 ms / p99 ≤ 570 ms (blueprint §4.1).
     BudgetRow {
@@ -88,6 +105,25 @@ const BUDGET_TABLE: &[BudgetRow] = &[
         label: "moon",
         p50_budget_ns: 300_000_000,
         p99_budget_ns: 570_000_000,
+        // Measured 2026-08-25 on two platforms. p50 is a tight cluster —
+        // 863.51 ms on the Linux CI runner, 869.86 ms on macOS — which is what
+        // says this is the code and not the runner. p99 is not: 1328.05 ms on
+        // CI against 2025.15 ms on macOS. Ceilings are set ~1.4x above the
+        // WORST observation on either platform, not above the first one
+        // measured; a ceiling drawn from a single machine is a flake waiting
+        // for the other machine to run it.
+        known_miss: Some(KnownMiss {
+            tracked_as: "pilotspace/moon#719",
+            p50_ceiling_ns: 1_200_000_000,
+            p99_ceiling_ns: 3_000_000_000,
+            why: "Moon's Cypher WRITE executor ignores the property index, so the create-path \
+                  MATCH…SET scans every node of the label and graph-node creation is O(N^2). \
+                  NOT a stale budget: the blueprint's 5-chunk assumption re-measures as exactly \
+                  5 through the production path, and the payload is a constant 50 entities / \
+                  150 relations. No application-side workaround exists — see \
+                  crates/lunaris-storage-moon/tests/graph_write_scan_reverse_ratchet.rs, which \
+                  fails the day this is fixed and lists the re-measure steps.",
+        }),
     },
     // HELIOS-05 (CONTEXT.md D-07/D-09) — p50 ≤ 20 ms tool-call overhead for
     // the scratchpad surface. `p99_budget_ns = 0` per D-09: p99 was never
@@ -99,8 +135,39 @@ const BUDGET_TABLE: &[BudgetRow] = &[
         label: "moon",
         p50_budget_ns: 20_000_000,
         p99_budget_ns: 0,
+        known_miss: None,
     },
 ];
+
+/// A row that misses its blueprint budget for a reason we have diagnosed and
+/// cannot fix from this repo.
+///
+/// This is a ratchet, not a waiver, and the difference is the whole point. A
+/// plain exception list only ever grows: rows get added when they go red and
+/// nothing ever takes them out, so the gate quietly stops covering the thing
+/// it was built for. Three rules prevent that:
+///
+/// * The row must still be MEASURED. A known miss is never a skip.
+/// * It must stay under `p50_ceiling_ns` / `p99_ceiling_ns`, which sit above
+///   the measurement that justified the entry — not above the budget. A row
+///   that gets worse still fails, so an exception cannot absorb a fresh
+///   regression.
+/// * If it comes back INSIDE its real budget the sweep FAILS and says to
+///   delete the entry. An exception that outlived its cause is exactly the
+///   rubber stamp this design exists to prevent.
+#[derive(Debug, Clone, Copy)]
+struct KnownMiss {
+    /// Where the cause is tracked. Required — an exception with no owner is
+    /// indistinguishable from one nobody ever revisited.
+    tracked_as: &'static str,
+    /// Upper bound on p50, set above the measurement that justified the entry.
+    p50_ceiling_ns: u64,
+    /// Upper bound on p99. ZERO means "not ratcheted", legitimate only for a
+    /// row that has no p99 budget in the first place.
+    p99_ceiling_ns: u64,
+    /// What is wrong, and what would let this entry be deleted.
+    why: &'static str,
+}
 
 #[derive(Debug, Clone, Copy)]
 struct BudgetRow {
@@ -114,6 +181,8 @@ struct BudgetRow {
     /// CONTEXT.md D-09 left its p99 untightened, and the Postgres row it would
     /// have inherited a p99 from no longer exists.
     p99_budget_ns: u64,
+    /// `Some` when this row is a diagnosed, tracked miss. See [`KnownMiss`].
+    known_miss: Option<KnownMiss>,
 }
 
 #[derive(Debug, Clone)]
@@ -148,12 +217,17 @@ struct Sweep {
     passed: Vec<String>,
     skipped: Vec<String>,
     hard_failures: Vec<String>,
+    /// Rows outside budget for a diagnosed, tracked cause and no worse than
+    /// the ceiling recorded with it. These are MEASURED and reported, never
+    /// skipped — the number still has to be produced every run, which is what
+    /// makes the ceiling and the obsolete-entry check enforceable.
+    known_misses: Vec<String>,
 }
 
 impl Sweep {
     /// Rows that produced a real number. A row that skipped is NOT measured.
     fn measured(&self) -> usize {
-        self.passed.len() + self.hard_failures.len()
+        self.passed.len() + self.hard_failures.len() + self.known_misses.len()
     }
 
     /// `Ok(())` only when every row in the table produced a number and every
@@ -196,6 +270,55 @@ impl Sweep {
     }
 }
 
+/// How one measured row lands against its budget and any [`KnownMiss`] entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RowVerdict {
+    /// Inside its blueprint budget, with no exception recorded.
+    Pass,
+    /// Outside its budget, but diagnosed, tracked, and no worse than the
+    /// ceiling recorded with the exception.
+    KnownMiss,
+    /// Inside its budget WHILE carrying an exception — the exception has
+    /// outlived its cause and must be deleted.
+    ObsoleteWaiver,
+    /// Outside its budget with no exception, or outside the ceiling of the
+    /// exception it has.
+    Fail,
+}
+
+/// Classify one measured row. Pure, so the four outcomes can be driven
+/// directly instead of through Criterion data on disk.
+fn classify_row(row: &BudgetRow, rep: &BudgetReport) -> RowVerdict {
+    let within_budget = rep.p50_within_budget && rep.p99_within_budget;
+    match row.known_miss {
+        None => {
+            if within_budget {
+                RowVerdict::Pass
+            } else {
+                RowVerdict::Fail
+            }
+        }
+        Some(km) => {
+            if within_budget {
+                // The cause is fixed. Say so loudly rather than leaving a
+                // dead entry that quietly narrows the gate forever.
+                return RowVerdict::ObsoleteWaiver;
+            }
+            let p50_ok = rep.p50_ms * 1e6 <= km.p50_ceiling_ns as f64;
+            // A zero p99 ceiling means "not ratcheted", which is only
+            // legitimate where there is no p99 budget to miss in the first
+            // place. Where there IS one, a zero ceiling must not read as
+            // "anything goes".
+            let p99_ok = if km.p99_ceiling_ns == 0 {
+                row.p99_budget_ns == 0
+            } else {
+                rep.p99_ms * 1e6 <= km.p99_ceiling_ns as f64
+            };
+            if p50_ok && p99_ok { RowVerdict::KnownMiss } else { RowVerdict::Fail }
+        }
+    }
+}
+
 /// Walk [`BUDGET_TABLE`] against `target_root` and classify every row.
 fn sweep_budgets(target_root: &Path) -> Sweep {
     let mut sweep = Sweep::default();
@@ -208,6 +331,32 @@ fn sweep_budgets(target_root: &Path) -> Sweep {
             }
             Ok(CheckOutcome::Reported(rep)) => {
                 let id = format!("{}/{}/{}", rep.group, rep.bench, rep.label);
+                match classify_row(row, &rep) {
+                    RowVerdict::KnownMiss => {
+                        let km = row.known_miss.expect("KnownMiss verdict implies an entry");
+                        sweep.known_misses.push(format!(
+                            "{id} → {} [tracked: {}; ceiling p50 {:.0} ms / p99 {:.0} ms] {}",
+                            format_failure(&rep),
+                            km.tracked_as,
+                            km.p50_ceiling_ns as f64 / 1e6,
+                            km.p99_ceiling_ns as f64 / 1e6,
+                            km.why,
+                        ));
+                        continue;
+                    }
+                    RowVerdict::ObsoleteWaiver => {
+                        let km = row.known_miss.expect("ObsoleteWaiver implies an entry");
+                        sweep.hard_failures.push(format!(
+                            "{id} → now INSIDE budget (p50 {:.2} ms ≤ {:.2} ms) while still \
+                             carrying a known-miss entry for {}. The cause appears fixed — \
+                             delete the `known_miss` on this row so the budget is enforced \
+                             again. ({})",
+                            rep.p50_ms, rep.p50_budget_ms, km.tracked_as, km.why,
+                        ));
+                        continue;
+                    }
+                    RowVerdict::Pass | RowVerdict::Fail => {}
+                }
                 if rep.p50_within_budget && rep.p99_within_budget {
                     // A row with no p99 contract has `p99_budget_ms == 0`, and
                     // rendering that as "p99 2.18 ms ≤ 0.00 ms" on a PASS line
@@ -309,10 +458,24 @@ fn verifies_helios_budget_row_present() {
 /// derived from p50 so the parse path still has something to read.
 fn populate_all_rows(root: &Path, fraction: f64) {
     for row in BUDGET_TABLE {
-        let p50 = row.p50_budget_ns as f64 * fraction;
+        // A row carrying a `known_miss` is EXPECTED to be over budget, so
+        // populating it at a fraction of its budget would render it as an
+        // obsolete entry and fail the sweep. Scale such rows against their
+        // ceiling instead, which is the state "everything is as we recorded
+        // it" for that row. `every_known_miss_in_the_table_names_a_tracking_
+        // reference` pins ceiling > budget, so a fraction near 0.5 lands
+        // between the two — a genuine known miss, not an accidental pass.
+        let scale_ns = match row.known_miss {
+            Some(km) => km.p50_ceiling_ns,
+            None => row.p50_budget_ns,
+        } as f64;
+        let p50 = scale_ns * fraction;
         write_synthetic_estimates(root, row.group, row.bench, row.label, p50);
-        let top =
-            if row.p99_budget_ns > 0 { row.p99_budget_ns as f64 * fraction } else { p50 * 1.2 };
+        let p99_scale_ns = match row.known_miss {
+            Some(km) if km.p99_ceiling_ns > 0 => km.p99_ceiling_ns,
+            _ => row.p99_budget_ns,
+        };
+        let top = if p99_scale_ns > 0 { p99_scale_ns as f64 * fraction } else { p50 * 1.2 };
         write_synthetic_sample(
             root,
             row.group,
@@ -387,9 +550,18 @@ fn a_complete_in_budget_sweep_passes() {
     let sweep = sweep_budgets(&root);
     assert_eq!(sweep.measured(), BUDGET_TABLE.len(), "fixture: every row measured");
     assert_eq!(sweep.skipped.len(), 0, "fixture: nothing skipped");
+    // Fixture validity: the waived rows must land as KNOWN misses here, not
+    // as passes. If they rendered inside budget the sweep would fail as an
+    // obsolete entry, and this test would be asserting the wrong thing.
+    assert_eq!(
+        sweep.known_misses.len(),
+        BUDGET_TABLE.iter().filter(|r| r.known_miss.is_some()).count(),
+        "fixture: every waived row must render as a known miss, got {:?}",
+        sweep.known_misses
+    );
     assert!(
         sweep.verdict().is_ok(),
-        "every row measured at half its budget must pass: {:?}",
+        "every row at half its effective ceiling must pass: {:?}",
         sweep.verdict()
     );
 }
@@ -400,15 +572,20 @@ fn a_complete_in_budget_sweep_passes() {
 fn a_complete_sweep_with_one_miss_fails_and_names_the_row() {
     let root = tempdir_for_test("budget_sweep_one_miss");
     populate_all_rows(&root, 0.5);
-    // Blow out exactly one row: the recall p50, which is the core contract.
-    let recall =
-        BUDGET_TABLE.iter().find(|r| r.group == "recall_hot_path").expect("recall row exists");
+    // Blow out exactly one row. It must be a row with NO `known_miss`, or the
+    // ceiling would absorb the overshoot and this would assert nothing —
+    // `recall_hot_path`, the obvious choice and the one this test used to
+    // pick, is currently a tracked miss.
+    let victim = BUDGET_TABLE
+        .iter()
+        .find(|r| r.known_miss.is_none() && r.bench == "atomic_write")
+        .expect("an unwaived row to blow out");
     write_synthetic_estimates(
         &root,
-        recall.group,
-        recall.bench,
-        recall.label,
-        recall.p50_budget_ns as f64 * 3.0,
+        victim.group,
+        victim.bench,
+        victim.label,
+        victim.p50_budget_ns as f64 * 3.0,
     );
 
     let sweep = sweep_budgets(&root);
@@ -416,7 +593,7 @@ fn a_complete_sweep_with_one_miss_fails_and_names_the_row() {
     assert_eq!(sweep.skipped.len(), 0, "fixture: nothing skipped");
 
     let err = sweep.verdict().expect_err("an over-budget row must fail the sweep");
-    assert!(err.contains("recall_q"), "message must name the offending bench: {err}");
+    assert!(err.contains("atomic_write"), "message must name the offending bench: {err}");
     assert!(!err.contains("INCOMPLETE"), "this is a budget miss, not a coverage gap: {err}");
 }
 
@@ -441,6 +618,7 @@ fn asserts_present_estimates() {
         label: "moon",
         p50_budget_ns: 50_000_000,
         p99_budget_ns: 110_000_000,
+        known_miss: None,
     };
 
     let outcome = check_budget(&tmp, row).expect("check");
@@ -472,6 +650,7 @@ fn asserts_over_budget_emits_actionable_message() {
         label: "moon",
         p50_budget_ns: 50_000_000,
         p99_budget_ns: 110_000_000,
+        known_miss: None,
     };
 
     let outcome = check_budget(&tmp, row).expect("check");
@@ -498,6 +677,7 @@ fn missing_estimates_skip_without_panic() {
         label: "moon",
         p50_budget_ns: 1,
         p99_budget_ns: 1,
+        known_miss: None,
     };
     let outcome = check_budget(&tmp, row).expect("check");
     assert!(matches!(outcome, CheckOutcome::Skipped(_)), "missing data must skip; got {outcome:?}");
@@ -657,6 +837,7 @@ fn print_report(sweep: &Sweep) {
     eprintln!("Measured:      {}", sweep.measured());
     eprintln!("Passed:        {}", sweep.passed.len());
     eprintln!("Skipped:       {}", sweep.skipped.len());
+    eprintln!("Known misses:  {}", sweep.known_misses.len());
     eprintln!("Hard failures: {}", sweep.hard_failures.len());
     eprintln!();
     for p in &sweep.passed {
@@ -664,6 +845,9 @@ fn print_report(sweep: &Sweep) {
     }
     for s in &sweep.skipped {
         eprintln!("  SKIP   {s}");
+    }
+    for k in &sweep.known_misses {
+        eprintln!("  KNOWN  {k}");
     }
     for f in &sweep.hard_failures {
         eprintln!("  HARD   {f}");
@@ -729,5 +913,113 @@ mod tracing_subscriber {
             // shape stays clean.
             Ok(())
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Known-miss ratchet
+// ---------------------------------------------------------------------------
+
+/// Build a synthetic report at an explicit p50/p99, so the four outcomes can
+/// be driven without Criterion data on disk.
+fn report_at(row: &BudgetRow, p50_ns: f64, p99_ns: f64) -> BudgetReport {
+    BudgetReport {
+        group: row.group.to_string(),
+        bench: row.bench.to_string(),
+        label: row.label.to_string(),
+        p50_ms: p50_ns / 1e6,
+        p99_ms: p99_ns / 1e6,
+        p50_budget_ms: row.p50_budget_ns as f64 / 1e6,
+        p99_budget_ms: row.p99_budget_ns as f64 / 1e6,
+        p50_within_budget: p50_ns <= row.p50_budget_ns as f64,
+        p99_within_budget: row.p99_budget_ns == 0 || p99_ns <= row.p99_budget_ns as f64,
+    }
+}
+
+fn waived_row() -> BudgetRow {
+    BudgetRow {
+        group: "ingest_hot_path",
+        bench: "synthetic_waived",
+        label: "moon",
+        p50_budget_ns: 300_000_000,
+        p99_budget_ns: 570_000_000,
+        known_miss: Some(KnownMiss {
+            tracked_as: "pilotspace/moon#719",
+            p50_ceiling_ns: 1_200_000_000,
+            p99_ceiling_ns: 2_000_000_000,
+            why: "synthetic fixture",
+        }),
+    }
+}
+
+/// A tracked miss inside its ceiling is reported, not failed. Without this the
+/// only way to keep CI green over a diagnosed upstream defect is to delete the
+/// row or loosen its budget, and both of those lose the contract permanently.
+#[test]
+fn a_tracked_miss_inside_its_ceiling_is_not_a_failure() {
+    let row = waived_row();
+    // 863 ms — the measured INGEST-06 p50, over the 300 ms budget and under
+    // the 1200 ms ceiling.
+    let rep = report_at(&row, 863_000_000.0, 1_328_000_000.0);
+    assert!(!rep.p50_within_budget, "fixture: this must be over budget");
+    assert_eq!(classify_row(&row, &rep), RowVerdict::KnownMiss);
+}
+
+/// The ceiling is the load-bearing half. An exception that absorbed any
+/// regression would turn the row off, which is indistinguishable from
+/// deleting it.
+#[test]
+fn a_tracked_miss_past_its_ceiling_still_fails() {
+    let row = waived_row();
+    let rep = report_at(&row, 1_500_000_000.0, 1_328_000_000.0);
+    assert_eq!(classify_row(&row, &rep), RowVerdict::Fail);
+}
+
+/// A p99 blow-out must not hide behind a p50 that is still under its ceiling.
+#[test]
+fn a_tracked_miss_fails_on_p99_ceiling_too() {
+    let row = waived_row();
+    let rep = report_at(&row, 863_000_000.0, 2_500_000_000.0);
+    assert_eq!(classify_row(&row, &rep), RowVerdict::Fail);
+}
+
+/// The reverse edge. When the cause is fixed the row comes back inside
+/// budget, and nothing would ever say so — the exception would sit there
+/// forever, well documented and unread. So this is a failure with a to-do.
+#[test]
+fn a_tracked_miss_that_meets_budget_fails_so_the_entry_gets_deleted() {
+    let row = waived_row();
+    let rep = report_at(&row, 120_000_000.0, 200_000_000.0);
+    assert!(rep.p50_within_budget, "fixture: this must be inside budget");
+    assert_eq!(classify_row(&row, &rep), RowVerdict::ObsoleteWaiver);
+}
+
+/// An unwaived row is unaffected by any of the above.
+#[test]
+fn an_unwaived_row_still_passes_and_fails_on_its_budget_alone() {
+    let mut row = waived_row();
+    row.known_miss = None;
+    let over = report_at(&row, 863_000_000.0, 1_328_000_000.0);
+    assert_eq!(classify_row(&row, &over), RowVerdict::Fail);
+    let under = report_at(&row, 120_000_000.0, 200_000_000.0);
+    assert_eq!(classify_row(&row, &under), RowVerdict::Pass);
+}
+
+/// Every entry in the shipped table must name where its cause is tracked and
+/// why. An exception with no reference is one nobody can ever retire.
+#[test]
+fn every_known_miss_in_the_table_names_a_tracking_reference() {
+    for row in BUDGET_TABLE {
+        let Some(km) = row.known_miss else { continue };
+        let id = format!("{}/{}/{}", row.group, row.bench, row.label);
+        assert!(!km.tracked_as.trim().is_empty(), "{id}: known miss with no tracking reference");
+        assert!(km.why.len() > 20, "{id}: known miss with no usable reason: {:?}", km.why);
+        assert!(
+            km.p50_ceiling_ns > row.p50_budget_ns,
+            "{id}: ceiling {} is not above the budget {} — the entry could never be anything but \
+             obsolete",
+            km.p50_ceiling_ns,
+            row.p50_budget_ns
+        );
     }
 }
