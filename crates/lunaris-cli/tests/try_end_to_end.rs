@@ -39,7 +39,31 @@ use std::process::Command;
 /// A phrase that appears verbatim in exactly one built-in sample memory. If it
 /// shows up in the rendered hits, the bytes made the full round trip:
 /// ingest → chunk → embed → Moon write → FT search → hydrate → render.
-const CORPUS_MARKER: &str = "single-shard";
+/// Distinctive phrases from the built-in corpus. The assertion below wants any
+/// ONE of them.
+///
+/// This was a single `&str` pinned to one document, which made the test assert
+/// something stricter than its own stated purpose. `lunaris try` deliberately
+/// recalls five of six ("so the output demonstrates that retrieval RANKS rather
+/// than dumps"), so exactly one sample is cut every run — and which one depends
+/// on a fused score whose dense leg comes from `StubEmbedder`, i.e. from hashed
+/// pseudo-vectors carrying no meaning at all. Pinning the marker to one document
+/// pinned the test to that arbitrary ordering: the moment `det_vec` stopped
+/// emitting single-orthant vectors (where every document was similar to every
+/// other, so the ranking barely moved), a different sample fell out of the top
+/// five and the test failed while the trial worked perfectly.
+///
+/// The purpose, in the assertion's own words, is that the output must carry
+/// "the built-in corpus text" — proof the trial recalled something real rather
+/// than reporting success on nothing. Any of these phrases proves exactly that,
+/// and none of them depends on which sample the k=5 cut happens to drop.
+const CORPUS_MARKERS: &[&str] = &[
+    "single-shard",
+    "Moon over Postgres",
+    "append-only-file rewrite",
+    "two named operating points",
+    "Never hold a lock across an await",
+];
 
 fn run_try(dir: &tempfile::TempDir, extra: &[&str]) -> std::process::Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_lunaris"));
@@ -71,10 +95,11 @@ fn try_brings_up_its_own_store_and_prints_real_hits() {
     );
 
     assert!(
-        stdout.contains(CORPUS_MARKER),
+        CORPUS_MARKERS.iter().any(|m| stdout.contains(m)),
         "`lunaris try` must print hits carrying the built-in corpus text. A trial \
          that reports success without recalling anything is the exact failure \
-         mode this command exists to disprove.\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
+         mode this command exists to disprove. None of {CORPUS_MARKERS:?} \
+         appeared.\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
     );
 
     assert!(
@@ -101,7 +126,10 @@ fn try_answers_a_caller_supplied_query() {
          that silently answers a different question is worse than one that \
          fails\n{stdout}"
     );
-    assert!(stdout.contains(CORPUS_MARKER), "stdout:\n{stdout}");
+    assert!(
+        CORPUS_MARKERS.iter().any(|m| stdout.contains(m)),
+        "none of {CORPUS_MARKERS:?} in stdout:\n{stdout}"
+    );
 }
 
 /// Re-running must be idempotent: the corpus is dedupe-keyed, so a second run
@@ -117,7 +145,10 @@ fn a_second_run_reuses_the_durable_store_without_duplicating_the_corpus() {
     let second = run_try(&dir, &[]);
     let stdout = String::from_utf8_lossy(&second.stdout);
     assert!(second.status.success(), "{}", String::from_utf8_lossy(&second.stderr));
-    assert!(stdout.contains(CORPUS_MARKER), "stdout:\n{stdout}");
+    assert!(
+        CORPUS_MARKERS.iter().any(|m| stdout.contains(m)),
+        "none of {CORPUS_MARKERS:?} in stdout:\n{stdout}"
+    );
     assert!(
         stdout.contains("6 sample memories"),
         "the corpus size must be stable across runs — a growing count means the \
