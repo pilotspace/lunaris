@@ -194,4 +194,39 @@ describe("embedder backend visibility", () => {
         "accessor is not reading the resolved backend",
     ).not.toBe(withNoModel);
   });
+  test("bothPublishedEntriesCarryIt — ESM and CJS, not just the binding", async (ctx) => {
+    // `package.json` resolves `import` to ./index.mjs and `require` to
+    // ./lunaris.cjs — two entry points, and every other test in this file
+    // exercises only the first. A wrapper change that dropped the method from
+    // the CJS surface would leave all of them green while `require("lunaris")`
+    // users lost it, which is the 4-of-5-render-sites shape.
+    //
+    // `lunaris.cjs` re-exports the native class and installs accessors on the
+    // handle `open` returns, so the method reaches CJS by inheritance rather
+    // than by an explicit re-declaration — precisely the kind of coverage that
+    // holds by accident until it doesn't.
+    const url = resolveMoonUrl();
+    if (!(await moonReachable(url))) {
+      ctx.skip(`Moon unreachable at ${url}`);
+      return;
+    }
+
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const cjsEntry = path.join(here, "..", "lunaris.cjs");
+    const script = `
+      const l = require(${JSON.stringify(cjsEntry)});
+      l.open(${JSON.stringify(url)}).then((h) => {
+        process.stdout.write("KIND=" + typeof h.embedderBackend + " TAG=" + h.embedderBackend());
+      });
+    `;
+    const out = execFileSync(process.execPath, ["-e", script], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const m = /KIND=(\S+) TAG=(\S+)/.exec(out);
+    expect(m, `CJS child produced no KIND=/TAG= line: ${out.slice(-400)}`).not.toBeNull();
+    expect(m![1]).toBe("function");
+    expect(KNOWN_TAGS).toContain(m![2]);
+    expect(m![2]).not.toBe("unresolved");
+  });
 });
