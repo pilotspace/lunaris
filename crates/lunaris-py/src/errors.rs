@@ -29,15 +29,14 @@ pyo3::create_exception!(
 /// Coarse subsystem classifier — mirrors the [`::lunaris::LunarisError`]
 /// variants 1:1. Kept as a `&'static str` (not a Python enum) so the Python
 /// side can compare with plain `==` and logs stay string-only.
+///
+/// This was a local match ending in `_ => "UNKNOWN"`, and the "1:1" above was
+/// wrong: `LunarisError::Scope` had been added and reached Python as UNKNOWN.
+/// The wildcard was not optional — `LunarisError` is `#[non_exhaustive]` and
+/// this is a downstream crate — so the claim could never be compiler-checked
+/// here. It is checked in `lunaris-core`, where the match lives now.
 fn classify(err: &::lunaris::LunarisError) -> &'static str {
-    match err {
-        ::lunaris::LunarisError::Storage(_) => "STORAGE",
-        ::lunaris::LunarisError::Extract(_) => "EXTRACT",
-        ::lunaris::LunarisError::Validate(_) => "VALIDATE",
-        ::lunaris::LunarisError::Retrieve(_) => "RETRIEVE",
-        ::lunaris::LunarisError::Consolidate(_) => "CONSOLIDATE",
-        _ => "UNKNOWN",
-    }
+    err.subsystem().code()
 }
 
 /// Convert a [`::lunaris::LunarisError`] into a [`PyErr`] of type
@@ -60,8 +59,8 @@ pub(crate) fn py_err_str<D: std::fmt::Display>(code: &'static str, e: D) -> PyEr
 
 #[cfg(test)]
 mod tests {
-    // Unit-level test: classification covers all 5 variants from
-    // `lunaris-core/src/error.rs:5-17` without hitting PyO3 runtime. The
+    // Unit-level test: classification covers every variant the core enum
+    // declares (see `classifies_every_subsystem`) without hitting PyO3 runtime. The
     // Python-side round-trip (`.code` / `.message` readable from Python) is
     // covered by `tests/test_open_ingest_recall.py::test_errors_map_to_lunaris_error`.
 
@@ -79,5 +78,19 @@ mod tests {
     fn classifies_validate_variant() {
         let err = LunarisError::Validate(ValidateError::Temporal);
         assert_eq!(classify(&err), "VALIDATE");
+    }
+
+    /// The two tests above cover two variants; the comment above them claimed
+    /// five, and the enum had six. Walk what the core enum actually declares.
+    #[test]
+    fn classifies_every_subsystem() {
+        for sub in lunaris_core::Subsystem::ALL {
+            assert_eq!(
+                classify(&sub.sample_error()),
+                sub.code(),
+                "{sub:?} does not reach the SDK with its own code"
+            );
+            assert_ne!(classify(&sub.sample_error()), "UNKNOWN", "{sub:?} arrives as UNKNOWN");
+        }
     }
 }

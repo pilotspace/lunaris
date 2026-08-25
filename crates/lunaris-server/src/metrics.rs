@@ -183,18 +183,20 @@ pub fn metrics() -> &'static Metrics {
 }
 
 /// Map a [`lunaris_core::LunarisError`] variant to its bounded `kind` label
-/// per the D-25 cardinality cap. New variants in the future MUST extend this
-/// match before the cap of ~10 distinct values is exceeded.
+/// per the D-25 cardinality cap.
+///
+/// This used to be a local match ending in `_ => "unknown"`, above a comment
+/// instructing the next person to extend it. `LunarisError` is
+/// `#[non_exhaustive]`, so that wildcard was mandatory and the compiler could
+/// not enforce the instruction — when `Scope` was added, this label silently
+/// became "unknown" and the test asserting otherwise was named
+/// `error_kind_maps_every_lunaris_error_variant`.
+///
+/// [`lunaris_core::Subsystem`] moves the classifying match inside the crate
+/// that owns the enum, where exhaustiveness is checked. The cardinality cap is
+/// now bounded by `Subsystem::ALL.len()` rather than by vigilance.
 pub fn error_kind(err: &lunaris_core::LunarisError) -> &'static str {
-    use lunaris_core::LunarisError;
-    match err {
-        LunarisError::Storage(_) => "storage",
-        LunarisError::Validate(_) => "validate",
-        LunarisError::Extract(_) => "extract",
-        LunarisError::Retrieve(_) => "retrieve",
-        LunarisError::Consolidate(_) => "consolidate",
-        _ => "unknown",
-    }
+    err.subsystem().label()
 }
 
 #[cfg(test)]
@@ -258,7 +260,8 @@ mod tests {
     #[test]
     fn error_kind_maps_every_lunaris_error_variant() {
         use lunaris_core::{
-            ConsolError, ExtractError, LunarisError, RetrieveError, StorageError, ValidateError,
+            ConsolError, ExtractError, LunarisError, RetrieveError, ScopeError, StorageError,
+            ValidateError,
         };
         assert_eq!(
             error_kind(&LunarisError::Storage(StorageError::Backend("x".into()))),
@@ -277,5 +280,28 @@ mod tests {
             error_kind(&LunarisError::Consolidate(ConsolError::Backend("x".into()))),
             "consolidate"
         );
+        // `Scope` is a top-level variant too (added by W4.18 so cookbook code
+        // can `?` a `Scope::new`). This test's name claims totality; until now
+        // it covered 5 of 6 and the sixth fell through to "unknown".
+        assert_eq!(
+            error_kind(&LunarisError::Scope(ScopeError::Invalid("bad:scope".into()))),
+            "scope"
+        );
+    }
+
+    /// The list above is hand-written, so it can fall behind the enum exactly
+    /// the way it just did. `Subsystem::ALL` cannot: it is generated from the
+    /// same macro invocation as `LunarisError::subsystem`, whose match is
+    /// exhaustive *inside* the defining crate. Walking it here turns "someone
+    /// added a variant and forgot this file" into a failure right here.
+    #[test]
+    fn error_kind_agrees_with_the_core_subsystem_tag() {
+        for sub in lunaris_core::Subsystem::ALL {
+            assert_ne!(
+                sub.label(),
+                "unknown",
+                "{sub:?} has no bounded metrics label; extend the D-25 match"
+            );
+        }
     }
 }

@@ -42,6 +42,12 @@ pub fn map_error(err: LunarisError) -> Response {
         LunarisError::Consolidate(_) => {
             (StatusCode::INTERNAL_SERVER_ERROR, "consolidate", err.to_string())
         }
+        // A rejected partition key is the caller's to fix, so 400 rather than
+        // the wildcard's 500. The message carries the offending string.
+        LunarisError::Scope(_) => (StatusCode::BAD_REQUEST, "scope", err.to_string()),
+        // `LunarisError` is `#[non_exhaustive]`; this arm cannot be removed.
+        // `map_error_covers_every_subsystem` below is what stops a new variant
+        // from quietly landing here as an unexplained 500.
         _ => (StatusCode::INTERNAL_SERVER_ERROR, "unknown", err.to_string()),
     };
     (status, Json(serde_json::json!({ "error": code, "message": message }))).into_response()
@@ -60,6 +66,45 @@ mod tests {
         let body_bytes = to_bytes(resp.into_body(), 1024).await.unwrap();
         let v: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(v["error"], "confirmation_required");
+    }
+
+    /// A rejected partition key is a *caller* mistake, not a server fault.
+    /// Before this test `LunarisError::Scope` hit the wildcard arm and left as
+    /// a 500 labelled `"unknown"` — a message that pages an on-call for a
+    /// client typo and tells them nothing. The variant is documented as the
+    /// one downstream code `?`s a `Scope::new` into, so the first error of this
+    /// shape arrives from a caller, which is precisely the 4xx case.
+    #[tokio::test]
+    async fn invalid_scope_maps_to_400_and_names_itself() {
+        let err = LunarisError::Scope(lunaris_core::ScopeError::Invalid("bad:scope".into()));
+        let resp = map_error(err);
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body_bytes = to_bytes(resp.into_body(), 1024).await.unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(v["error"], "scope");
+        assert!(
+            v["message"].as_str().unwrap().contains("bad:scope"),
+            "the rejected key must appear so the caller can fix it: {v}"
+        );
+    }
+
+    /// The module doc says this maps *every* variant. `LunarisError` is
+    /// `#[non_exhaustive]`, so the wildcard arm can never be deleted and the
+    /// compiler will never make that sentence true. Walk every subsystem the
+    /// core enum knows about and prove none of them reaches the wildcard.
+    #[tokio::test]
+    async fn map_error_covers_every_subsystem() {
+        for sub in lunaris_core::Subsystem::ALL {
+            let resp = map_error(sub.sample_error());
+            let status = resp.status();
+            let body_bytes = to_bytes(resp.into_body(), 1024).await.unwrap();
+            let v: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+            assert_ne!(
+                v["error"], "unknown",
+                "{sub:?} falls through to the wildcard arm — give it an explicit \
+                 status in map_error (it currently answers {status})"
+            );
+        }
     }
 
     #[tokio::test]
