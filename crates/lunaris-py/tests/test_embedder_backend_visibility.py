@@ -116,8 +116,27 @@ async def test_the_tag_distinguishes_degraded_from_healthy(moon_backend_url: str
         "asyncio.run(main())\n"
     )
 
-    def run(extra_env: dict[str, str]) -> str:
-        env = {**os.environ, **extra_env}
+    # Every route `resolve_default_embedder` can take. The degraded arm has to
+    # close ALL of them: pointing only LUNARIS_EMBEDDER_GGUF at a missing file
+    # leaves the remote routes open, and this job exports
+    # LUNARIS_EMBEDDER_OPENAI_URL at a stub — so the "degraded" arm resolved
+    # `openai-remote`, which is the resolver working correctly and the test
+    # asserting an environment assumption.
+    EMBEDDER_ROUTES = (
+        "LUNARIS_EMBEDDER_GGUF",
+        "LUNARIS_EMBEDDER_DIR",
+        "LUNARIS_EMBEDDER_OLLAMA_URL",
+        "LUNARIS_EMBEDDER_OPENAI_URL",
+        "LUNARIS_EMBEDDER_OPENAI_API_KEY",
+        "LUNARIS_EMBEDDER_OPENAI_MODEL",
+    )
+
+    def run(extra_env: dict[str, str], *, close_all_routes: bool = False) -> str:
+        env = {**os.environ}
+        if close_all_routes:
+            for k in EMBEDDER_ROUTES:
+                env.pop(k, None)
+        env.update(extra_env)
         out = subprocess.run(
             [sys.executable, "-c", script],
             env=env,
@@ -134,7 +153,10 @@ async def test_the_tag_distinguishes_degraded_from_healthy(moon_backend_url: str
         )
 
     as_shipped = run({})
-    with_no_model = run({"LUNARIS_EMBEDDER_GGUF": "/nonexistent/no-such-model.gguf"})
+    with_no_model = run(
+        {"LUNARIS_EMBEDDER_GGUF": "/nonexistent/no-such-model.gguf"},
+        close_all_routes=True,
+    )
 
     assert as_shipped in KNOWN_TAGS
     assert with_no_model == "noop"
@@ -149,6 +171,6 @@ async def test_the_tag_distinguishes_degraded_from_healthy(moon_backend_url: str
         )
 
     assert as_shipped != with_no_model, (
-        "pointing LUNARIS_EMBEDDER_GGUF at a missing file changed nothing — the "
-        "accessor is not reading the resolved backend"
+        "closing every embedder route changed nothing — the accessor is not "
+        "reading the resolved backend"
     )
