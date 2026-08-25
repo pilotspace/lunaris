@@ -53,7 +53,7 @@ Start Claude Code in the repo (`claude`). The `lunaris-mcp` process starts as
 a child; the scope is derived automatically from `git remote.origin.url` +
 branch (or the cwd if there is no git remote). Then, inside a session:
 
-```
+```text
 memory.ingest  source="src:notes/architecture"  content="The ingest pipeline writes one atomic_write per episode. Adding a second call is a bug."
 ```
 
@@ -64,7 +64,7 @@ memory.ingest  source="src:notes/architecture"  content="The ingest pipeline wri
 The LSN is `"{wall_ms}:{counter}"` — monotonically increasing within the
 scope. Recall it back:
 
-```
+```text
 memory.recall  query="ingest pipeline atomicity"  k=3
 ```
 

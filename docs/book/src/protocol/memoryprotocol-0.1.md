@@ -32,7 +32,7 @@ and only if they satisfy [§Conformance](#conformance). See
 
 Bearer token in the `Authorization` header on every `/v1/*` request:
 
-```
+```text
 Authorization: Bearer <token>
 ```
 
@@ -164,7 +164,7 @@ runtime `GraphPipeline::enable()`).
 **Response (SSE — `Accept: text/event-stream`)** (`200 OK`,
 `Content-Type: text/event-stream`):
 
-```
+```text
 event: hit
 data: { "id": [...], "score": 0.93, "degraded": false, ... }
 
@@ -273,7 +273,7 @@ pair), or `<wall_ms>.<counter>.<node_id>` (decimal triple). Examples:
 
 **Response** (`200 OK`, `Content-Type: application/x-ndjson`):
 
-```
+```text
 {"key":"chunk:01JBA...","value":{"id":[...],"text":"...","bt":{...}}}
 {"key":"entity:01JBA...","value":{"id":[...],"label":"...","bt":{...}}}
 ...

@@ -23,11 +23,13 @@ You never write Moon commands or SQL. You write one typed expression
 (see [The Retrieval DSL](../guides/retrieval-dsl.md) for the full
 operator set):
 
-```rust
+```rust,no_run
+# async fn demo() -> Result<(), lunaris::LunarisError> {
 use lunaris::{Keyword, Lunaris, Query, Scope, Vector};
 
 let lunaris = Lunaris::open("moon://localhost:6380").await?;
 let scoped  = lunaris.scoped(Scope::new("acme.agent-1")?);
+# let last_tuesday = lunaris_core::Hlc::from_parts(1_736_467_200_000, 0, 0);
 
 // Hybrid recall: vector + BM25 fused server-side, with a time-travel cut.
 let hits = scoped
@@ -36,6 +38,8 @@ let hits = scoped
     .as_of(last_tuesday)
     .execute(Query::text("what did we decide about the pricing page?"))
     .await?;
+# Ok(())
+# }
 ```
 
 ## 2. The data path

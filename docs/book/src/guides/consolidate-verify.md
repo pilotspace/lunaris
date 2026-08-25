@@ -35,8 +35,13 @@ per `episode_id`, and runs a consolidation pass:
 The crate has **no LLM backends** — community summaries are produced by the
 Phase-3 `Extractor` acting as a summarizer, wired at the umbrella handle.
 
-```rust
+```rust,no_run
+# use lunaris::Lunaris;
+# async fn demo() -> Result<(), lunaris::LunarisError> {
+# let lunaris = Lunaris::open("moon://localhost:6380").await?;
 lunaris.consolidator_pipeline().enable();
+# Ok(())
+# }
 ```
 
 `ConsolidatorPipelineHandle` (`crates/lunaris/src/consolidator_pipeline.rs`)
@@ -44,10 +49,15 @@ exposes `enable()` / `disable()` / `is_enabled()`, `set_consolidator(arc)`,
 `bind_storage(arc)`, `join_worker()`, `state_change_count()`, **and** —
 uniquely among the three pipeline handles — `enable_for_scope(prefix)`:
 
-```rust
+```rust,no_run
+# use lunaris::Lunaris;
+# async fn demo() -> Result<(), lunaris::LunarisError> {
+# let lunaris = Lunaris::open("moon://localhost:6380").await?;
 // Promote only events whose source starts with "helios:fs/" — Consolidator
 // stays off for every other tenant. Prefix match is exact: no regex, no glob.
 lunaris.consolidator_pipeline().enable_for_scope("helios:fs/");
+# Ok(())
+# }
 ```
 
 The prefix is a **source-prefix filter on the consolidate-event stream**, not
@@ -73,8 +83,13 @@ loser / reason; a non-deferred decision flows through **one** `atomic_write`
 `read_as_of` + `BiTemporal::invalidate_sys`), followed by one fire-and-forget
 audit publish.
 
-```rust
+```rust,no_run
+# use lunaris::Lunaris;
+# async fn demo() -> Result<(), lunaris::LunarisError> {
+# let lunaris = Lunaris::open("moon://localhost:6380").await?;
 lunaris.verify_pipeline().enable();
+# Ok(())
+# }
 ```
 
 `VerifierPipelineHandle` (`crates/lunaris/src/verify_pipeline.rs`) exposes
@@ -112,7 +127,10 @@ verifier queue depth **once** and, if it exceeds
 `crates/lunaris/src/recall.rs:26-31`), seeds the builder so every returned
 `Hit::degraded` is `true`:
 
-```rust
+```rust,no_run
+# use lunaris::{Lunaris, Query, Vector};
+# async fn demo() -> Result<(), lunaris::LunarisError> {
+# let lunaris = Lunaris::open("moon://localhost:6380").await?;
 let hits = lunaris
     .recall_with_degraded_check()
     .await?
@@ -124,6 +142,8 @@ for h in &hits {
         tracing::warn!("verifier backlog — results may be stale");
     }
 }
+# Ok(())
+# }
 ```
 
 It is best-effort: if the backend's `queue_depth` returns `NotSupported`, the

@@ -20,7 +20,9 @@ successful call.
 
 ## The three targets
 
-```rust
+```rust,ignore
+// Shape only — this mirrors the real declaration rather than calling it,
+// so it is `ignore`d: compiling a shadow copy of an enum proves nothing.
 pub enum ForgetTarget {
     Id(Ulid),               // OPS-01 — single-primitive purge across KV + vector + graph
     Scope(ScopeSpec),       // OPS-02 — prefix / metadata / episode-id predicate
@@ -59,7 +61,11 @@ default-time queries but a `recall().as_of(t_before_forget)` still returns it.
 
 ## Code
 
-```rust
+```rust,no_run
+# use lunaris::Scope;
+# use lunaris::Lunaris;
+# async fn demo() -> Result<(), lunaris::LunarisError> {
+# let lunaris = Lunaris::open("moon://localhost:6380").await?;
 use lunaris::{ForgetTarget, ScopeSpec};
 
 // Soft delete a session prefix.
@@ -78,6 +84,8 @@ let hard  = lunaris.forget(target.hard().with_token(token)).await?;
 assert!(!hard.preview);
 assert_eq!(hard.rows_written, 0);  // hard delete writes zero MVCC rows
 // hard.rows_deleted == one KvDelete per match
+# Ok(())
+# }
 ```
 
 `confirm_hard_forget` only accepts a `preview: true` receipt — replaying a
@@ -86,7 +94,9 @@ non-preview receipt returns the same `ConfirmationRequired` error
 
 ## The receipt
 
-```rust
+```rust,no_run
+# use lunaris::{ForgetTarget, Graph, IndexKind, Lsn, Vector};
+# async fn demo() -> Result<(), lunaris::LunarisError> {
 pub struct ForgetReceipt {
     pub target: ForgetTarget,
     pub indices_affected: Vec<IndexKind>,  // Kv | Vector | Graph
@@ -95,6 +105,8 @@ pub struct ForgetReceipt {
     pub audit_lsn: Lsn,                    // __lunaris_audit__ publish offset
     pub preview: bool,                     // true iff dry_run (no atomic_write happened)
 }
+# Ok(())
+# }
 ```
 
 `ForgetConfirmation` carries `for_audit_lsn` and cannot be constructed by the

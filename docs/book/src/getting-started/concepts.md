@@ -8,7 +8,7 @@ detail.
 
 ## The flow: Episode → ingest → storage → recall
 
-```
+```text
           Episode
              |
              v
@@ -83,11 +83,15 @@ Recall queries one of four whitelisted index names — `chunks`,
 
 Every primitive carries a `BiTemporal` (`crates/lunaris-core/src/bitemporal.rs`):
 
-```rust
+```rust,no_run
+# use lunaris_core::Hlc;
+# async fn demo() -> Result<(), lunaris::LunarisError> {
 pub struct BiTemporal {
     pub valid: (Hlc, Option<Hlc>),  // when the fact is true in the world
     pub sys:   (Hlc, Option<Hlc>),  // when the system observed/recorded it
 }
+# Ok(())
+# }
 ```
 
 Both are half-open `[from, to)` intervals; `to = None` means "still
@@ -130,10 +134,16 @@ Every Lunaris operation is partitioned by a **`Scope`** — a validated
 newtype (`crates/lunaris-core/src/scope.rs`), not a `user_id` string the
 caller could swap:
 
-```rust
+```rust,no_run
+# use lunaris::{EpisodeBuilder, Scope};
+# use lunaris::Lunaris;
+# async fn demo() -> Result<(), lunaris::LunarisError> {
+# let lunaris = Lunaris::open("moon://localhost:6380").await?;
 let scope  = Scope::new("acme.agent-1")?;   // validates against [A-Za-z0-9_\-.]{1,128}
 let scoped = lunaris.scoped(scope);          // ScopedLunaris — every op partitioned
 scoped.ingest(EpisodeBuilder::new("user-msg", "Alice loves chocolate.")).await?;
+# Ok(())
+# }
 ```
 
 `Scope::new` rejects the empty string, anything over 128 bytes, and any
@@ -166,7 +176,7 @@ KV keys are minted exclusively by `lunaris_core::keyspace` —
 `episode_key`, `chunk_key`, `entity_key`, `relation_key`, `fact_key`,
 `community_key` — in the canonical format:
 
-```
+```text
 lunaris:{scope}:{kind}:{ulid}
 ```
 

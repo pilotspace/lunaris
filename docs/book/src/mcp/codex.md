@@ -44,7 +44,7 @@ codex doctor
 Start Codex in the repo (`codex`). The scope is derived from
 `git remote.origin.url` + branch (or cwd if there is no git remote). Then:
 
-```
+```text
 memory.ingest  source="src:notes/architecture"  content="The ingest pipeline writes one atomic_write per episode."
 ```
 
@@ -52,7 +52,7 @@ memory.ingest  source="src:notes/architecture"  content="The ingest pipeline wri
 { "lsn": "1748083200000:1" }
 ```
 
-```
+```text
 memory.recall  query="ingest pipeline atomicity"  k=3
 ```
 

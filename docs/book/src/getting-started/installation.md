@@ -29,8 +29,12 @@ docker run -d --name lunaris-moon -p 6380:6379 \
   --shards 1 --protected-mode no --appendonly yes
 ```
 
-```rust
+```rust,no_run
+# use lunaris::Lunaris;
+# async fn demo() -> Result<(), lunaris::LunarisError> {
 let lunaris = lunaris::Lunaris::open("moon://127.0.0.1:6380").await?;
+# Ok(())
+# }
 ```
 
 `--shards 1` is **not optional**: a Lunaris ingest is one MULTI/EXEC
@@ -127,7 +131,7 @@ pure-Rust, no-C++-toolchain build (Tier-0): `default-features = false`.
 Smoke test — needs the Moon from
 [Prerequisites](#storage-moon) running:
 
-```rust
+```rust,no_run
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
     let lunaris = lunaris::Lunaris::open("moon://127.0.0.1:6380").await?;

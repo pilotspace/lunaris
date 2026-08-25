@@ -89,6 +89,9 @@ turns from that session keep landing under the same `Episode` source segment.
 shapes how turns are grouped, not what recall sees:
 
 ```rust,no_run
+# use lunaris::{Lunaris, Scope};
+# async fn demo() -> Result<(), lunaris::LunarisError> {
+# let lunaris = Lunaris::open("moon://localhost:6380").await?;
 # use std::sync::Arc;
 # use lunaris::{Lunaris, Scope};
 # use lunaris_recipes::conversational::MultiTurnConversation;
@@ -101,6 +104,8 @@ conv.remember("Confirmed the ryokan for the 14th.", "trip-planning").await?;
 // Recall still spans every session this user has ever had.
 let hits = conv.recall("what's confirmed for the Kyoto trip?").await?;
 # let _ = hits;
+# Ok(())
+# }
 # Ok(())
 # }
 ```

@@ -110,12 +110,15 @@ tokio               = { version = "1", features = ["macros", "rt-multi-thread"] 
 
 Write a thin entry test:
 
-```rust
+```rust,no_run
+# async fn demo() -> Result<(), lunaris::LunarisError> {
 #[tokio::test]
 async fn my_storage_conformance() -> anyhow::Result<()> {
     let storage = MyStorage::open("my://localhost:1234").await?;
     lunaris_conformance::run_full_storage_suite(std::sync::Arc::new(storage)).await
 }
+# Ok(())
+# }
 ```
 
 Conformant if and only if exit code is `0`.
@@ -127,13 +130,16 @@ test or only point at an already-running endpoint.
 
 **Path A — already-running server:**
 
-```rust
+```rust,no_run
+# async fn demo() -> Result<(), lunaris::LunarisError> {
 #[tokio::test]
 async fn my_server_protocol_conformance() -> anyhow::Result<()> {
     let client = reqwest::Client::new();
     let base = url::Url::parse("http://localhost:7000")?;
     lunaris_conformance::run_full_protocol_suite(client, base, "tok-test".to_string()).await
 }
+# Ok(())
+# }
 ```
 
 The server MUST honor the [MemoryProtocol 0.1](./memoryprotocol-0.1.md)

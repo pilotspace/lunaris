@@ -101,7 +101,7 @@ want a clean snapshot.
 Moon fresh, ingest data, and `kill -9` before the first auto-save /
 `BGREWRITEAOF` has run, the restart fails with:
 
-```
+```text
 Error: multi-part AOF replay failed
   AOF base RDB missing at moon.aof.1.base.rdb but incr moon.aof.1.incr.aof
   is 821715 bytes; refusing to replay incr against empty state
