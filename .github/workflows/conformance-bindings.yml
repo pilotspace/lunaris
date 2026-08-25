@@ -75,9 +75,16 @@ on:
     branches: [main]
     # The rule: every crate the parity suites EXECUTE, not just the ones that
     # define the bindings. This is the only job in the repo that starts a Moon
-    # and runs the SDK binding suites, and it does not run on `pull_request` at
-    # all — so a path missing here is a defect class nothing detects until the
-    # nightly, on main, after the merge.
+    # and runs the SDK binding suites, so a path missing here is a defect class
+    # that reaches main before anything detects it.
+    #
+    # The `pull_request` trigger above closes most of that window (F31, option
+    # (b)): PRs get Moon + the stub embedder + the Rust per-driver parity step,
+    # and skip both RELEASE SDK builds and both binding suites, which are the
+    # expensive part. The full matrix still runs only here and on the nightly —
+    # so a defect that ONLY the SDK binding suites can see is still post-merge.
+    # An earlier version of this comment said the job did not run on
+    # `pull_request` at all; that was true until 2026-08-25 and is not now.
     #
     # F30 is exactly that: `TimelineReconstruction::between` ignored its
     # `source_prefix`, `documentary_parity` went red on main for four runs, and

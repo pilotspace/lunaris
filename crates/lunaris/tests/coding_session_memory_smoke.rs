@@ -317,25 +317,22 @@ async fn coding_session_memory_v2_delegation_round_trip() -> anyhow::Result<()> 
             continue;
         };
         eprintln!("\n=== v2 delegation round-trip: {url_env} ({url}) ===");
-        // `pad.read` is NOT an exact-key fetch: `WorkingMemory::read` runs a
-        // fused Vector + BM25 top-k search and enforces the `source` equality
-        // filter AFTER hydration (source is not a field on Moon's `chunks` FT
-        // schema). With no embedder the vector leg carries no signal, and the
-        // read returns None for a value that is definitely stored — which is
-        // exactly what this assertion then reports as a lost payload.
+        // UN-GATED 2026-08-26 (F40). This test used to skip unless a GGUF was
+        // staged, because `pad.read` was not an exact-key fetch: it ran a fused
+        // Vector + BM25 top-k and took the first hit, so with no embedder the
+        // vector leg carried no signal and the read answered `None` for a value
+        // that was definitely stored.
         //
-        // Measured, not assumed: with the GGUF staged this passes in 6.4s;
-        // with `LUNARIS_EMBEDDER_GGUF` pointed at a missing file it fails in
-        // 0.93s with `left: None` — byte-identical to the CI failure.
-        // `integration.yml` stages no GGUF and says so.
+        // `WorkingMemory::read` now resolves `source` through a KV secondary
+        // index (`keyspace::source_index_key`) before it ranks anything, so it
+        // no longer depends on an embedding — and the skip's stated reason has
+        // stopped being true. Re-measured both arms rather than reasoning about
+        // it: green with the GGUF staged AND with `LUNARIS_EMBEDDER_GGUF`
+        // pointed at a missing file. `integration.yml` stages no GGUF, so this
+        // suite now actually RUNS there instead of reporting a skip as a pass.
         //
-        // The underlying defect (an exact-key read that depends on similarity
-        // search, and answers "absent" instead of erroring) is ship-plan F40.
-        if !lunaris_test_harness::models::embedder_available(
-            "coding_session_memory_v2_delegation_round_trip",
-        ) {
-            continue;
-        }
+        // Do not re-add a model gate here without re-measuring. A skip is a
+        // pass to the harness, and this is the one test that covers write→read.
         let lunaris = Arc::new(Lunaris::open(&url).await?);
         let session_id = format!("smoke-v2-rt-{}", ulid::Ulid::new());
         let pad =
