@@ -56,6 +56,7 @@ pub(crate) mod hotkeys;
 // ft-navigate-recall — FT.NAVIGATE raw RESP path (typed SDK lacks a DECAY slot).
 pub(crate) mod navigate;
 pub mod queue;
+pub mod repair;
 pub(crate) mod retry;
 pub mod scopes;
 // 0.7.0 task 22 — connect-time single-shard guard (RFC 0008 §6 Option C).

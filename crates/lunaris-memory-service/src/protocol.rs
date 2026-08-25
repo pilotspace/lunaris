@@ -96,6 +96,13 @@ pub enum MemoryRequest {
     Status {
         scope: String,
     },
+    /// Maintenance: remove `vec` fields that cannot be KNN candidates (F22).
+    /// Deliberately absent from the MCP tool roster and the HTTP routes — see
+    /// `crate::repair_vectors`.
+    RepairVectors {
+        scope: String,
+        params: crate::repair_vectors::RepairVectorsParams,
+    },
     ScratchpadWrite {
         scope: String,
         params: crate::scratchpad_write::ScratchpadWriteParams,
@@ -146,6 +153,7 @@ impl MemoryRequest {
             | MemoryRequest::RecordEdit { scope, .. }
             | MemoryRequest::Feedback { scope, .. }
             | MemoryRequest::Status { scope, .. }
+            | MemoryRequest::RepairVectors { scope, .. }
             | MemoryRequest::ScratchpadWrite { scope, .. }
             | MemoryRequest::ScratchpadRead { scope, .. }
             | MemoryRequest::ScratchpadGrep { scope, .. }
@@ -168,6 +176,7 @@ impl MemoryRequest {
             MemoryRequest::RecordEdit { .. } => "record_edit",
             MemoryRequest::Feedback { .. } => "feedback",
             MemoryRequest::Status { .. } => "status",
+            MemoryRequest::RepairVectors { .. } => "repair_vectors",
             MemoryRequest::ScratchpadWrite { .. } => "scratchpad_write",
             MemoryRequest::ScratchpadRead { .. } => "scratchpad_read",
             MemoryRequest::ScratchpadGrep { .. } => "scratchpad_grep",
@@ -272,6 +281,9 @@ pub async fn dispatch(
         }
         MemoryRequest::Status { .. } => {
             to_value(crate::status::handle(lunaris, scope, crate::status::StatusParams {}).await?)
+        }
+        MemoryRequest::RepairVectors { params, .. } => {
+            to_value(crate::repair_vectors::handle(lunaris, scope, params).await?)
         }
         MemoryRequest::ScratchpadWrite { params, .. } => {
             to_value(crate::scratchpad_write::handle(lunaris, scope, params).await?)

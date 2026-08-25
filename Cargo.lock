@@ -2320,10 +2320,12 @@ dependencies = [
  "clap",
  "dirs",
  "futures-util",
+ "hex",
  "indicatif",
  "lunaris-core",
  "lunaris-memory",
  "lunaris-memory-service",
+ "lunaris-storage-moon",
  "lunaris-test-harness",
  "reqwest 0.13.2",
  "serde",
@@ -2333,6 +2335,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "ulid",
 ]
 
 [[package]]

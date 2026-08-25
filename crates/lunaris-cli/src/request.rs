@@ -95,6 +95,27 @@ pub(crate) enum Command {
         as_of: Option<String>,
     },
 
+    /// Maintenance: drop stored embeddings that cannot be KNN candidates.
+    ///
+    /// An all-zero or non-finite `vec` is not an absent match but a universal
+    /// one — Moon scores it at distance 1.0 from every query, which outranks
+    /// every real hit below cosine 0.5, on every query, with no relation to the
+    /// text. Rows written before the F22 write-side guard landed still carry
+    /// them, and nothing else in the system removes them.
+    ///
+    /// Previews by default, like `forget`. `--commit` removes the `vec` field
+    /// and nothing else: the document's text and metadata stay, so BM25 and
+    /// hydration keep working and a later re-embed has a row to write into.
+    RepairVectors {
+        /// Which vector index to sweep.
+        #[arg(long, default_value = "chunks")]
+        index: String,
+
+        /// Actually remove the fields. Without this the sweep only reports.
+        #[arg(long)]
+        commit: bool,
+    },
+
     /// Report backend capabilities and queue health for the scope.
     Status,
 
@@ -192,6 +213,14 @@ impl Cli {
             },
 
             Command::Status => MemoryRequest::Status { scope },
+
+            Command::RepairVectors { index, commit } => MemoryRequest::RepairVectors {
+                scope,
+                params: lunaris_memory_service::repair_vectors::RepairVectorsParams {
+                    index: index.clone(),
+                    commit: *commit,
+                },
+            },
 
             Command::Forget { source_prefix, episode_id, commit } => {
                 if source_prefix.is_none() && episode_id.is_none() {
