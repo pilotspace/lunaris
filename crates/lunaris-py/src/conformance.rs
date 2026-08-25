@@ -134,10 +134,38 @@ fn embedder_config_embed_batch<'py>(
     })
 }
 
+/// W4.10 — resolve the PROCESS-DEFAULT embedder, the same GGUF → remote →
+/// Noop chain `Lunaris::open` walks, and hand it back as an
+/// `EmbedderConfig`.
+///
+/// The parity probe needs this because `EmbedderConfig` exposes no remote
+/// factory: with only `llamacpp()` to call, the cross-SDK parity test can
+/// never run anywhere a GGUF is not staged — which is every CI runner. It
+/// would report "skipped" forever, and a permanent skip is indistinguishable
+/// from a passing check. Going through the production resolver instead means
+/// the test runs against llama.cpp locally and against the stub OpenAI
+/// embedder in CI, with no branch in the probe.
+///
+/// Resolving to `NoopEmbedder` is NOT reported here — the caller detects it
+/// behaviourally (all-zero vectors) and classifies it as "no embedder", so
+/// this stays a thin wrapper with no policy of its own.
+#[pyfunction]
+fn embedder_config_from_env(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let inner = ::lunaris::resolve_default_embedder().await.map_err(py_err)?;
+        let dim = inner.dim();
+        Python::attach(|py| {
+            let cfg = crate::embedder_config::EmbedderConfig { inner, backend: "from-env", dim };
+            Ok(Py::new(py, cfg)?.into_any())
+        })
+    })
+}
+
 pub(crate) fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(conformance_fixture_episodes, m)?)?;
     m.add_function(wrap_pyfunction!(scan_kv_prefix, m)?)?;
     m.add_function(wrap_pyfunction!(embedder_config_embed_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(embedder_config_from_env, m)?)?;
     Ok(())
 }
 

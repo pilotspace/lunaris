@@ -130,6 +130,26 @@ pub async fn embedder_config_embed_batch(
     Ok(out.into_iter().map(|row| row.into_iter().map(|x| x as f64).collect()).collect())
 }
 
+/// W4.10 — resolve the PROCESS-DEFAULT embedder (the same GGUF → remote →
+/// Noop chain `Lunaris::open` walks) and hand it back as an
+/// `EmbedderConfig`.
+///
+/// `EmbedderConfig` exposes no remote factory, so a parity probe limited to
+/// `llamacpp()` can only run where a GGUF is staged — never on a CI runner.
+/// It would report "skipped" forever, and a permanent skip is
+/// indistinguishable from a passing check. Routing through the production
+/// resolver lets one probe cover llama.cpp locally and the stub OpenAI
+/// embedder in CI.
+///
+/// A `NoopEmbedder` resolution is NOT reported here; the caller detects it
+/// behaviourally (all-zero vectors), so this stays policy-free.
+#[napi(js_name = "embedderConfigFromEnv")]
+pub async fn embedder_config_from_env() -> napi::Result<crate::embedder_config::EmbedderConfig> {
+    let inner = ::lunaris::resolve_default_embedder().await.map_err(napi_err)?;
+    let declared_dim = inner.dim() as u32;
+    Ok(crate::embedder_config::EmbedderConfig { inner, declared_dim })
+}
+
 #[cfg(test)]
 mod tests {
     // Unit-level check that the handwritten Rust side compiles and that
