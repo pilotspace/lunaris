@@ -53,11 +53,12 @@ mod tests {
     }
 
     #[test]
-    fn sixty_one_surface_methods_present() {
+    fn sixty_two_surface_methods_present() {
         let ir = load_committed_ir();
-        // Plan 08-01 surface enumeration (15 methods):
+        // Plan 08-01 surface enumeration, plus later additions:
         //
-        //   Lunaris: open, ingest, recall, forget, snapshot        (5)
+        //   Lunaris: open, ingest, recall, forget, snapshot,
+        //            embedder_backend                              (6)
         //   Vector::new                                             (1)
         //   Keyword::bm25                                           (1)
         //   Graph::anchored                                         (1)
@@ -65,7 +66,9 @@ mod tests {
         //   GraphPipelineHandle (single toggle)                    (1)
         //   ConsolidatorPipelineHandle (single toggle)             (1)
         //                                                         ----
-        //   Phase 8 subtotal:                                       15
+        //   Phase 8 subtotal:                                       16
+        //   (15 at Plan 08-01; `embedder_backend` added by W0.7 so an SDK
+        //    caller can see a degraded embedder at all.)
         //
         // Plan 11-02b — conversational (25 methods):
         //
@@ -94,12 +97,12 @@ mod tests {
         //                                                         ----
         //   documentary subtotal:                                   21
         //                                                         ----
-        //   Grand total:                                            61
+        //   Grand total:                                            62
         let total_methods: usize =
             ir.modules.iter().flat_map(|m| &m.types).map(|t| t.methods.len()).sum();
         assert_eq!(
-            total_methods, 61,
-            "expected 61 surface methods (15 phase 8 + 25 conversational + 21 documentary), got {total_methods}: {:#?}",
+            total_methods, 62,
+            "expected 62 surface methods (16 phase 8 + 25 conversational + 21 documentary), got {total_methods}: {:#?}",
             ir.modules
         );
         // Module count sanity: 3 modules (lunaris + conversational + documentary).

@@ -288,6 +288,46 @@ impl std::fmt::Debug for Lunaris {
 }
 
 impl Lunaris {
+    /// Which embedder backend this process resolved, as a stable lowercase
+    /// string (`"llamacpp"`, `"openai-remote"`, `"ollama-remote"`, `"noop"`,
+    /// `"unresolved"`).
+    ///
+    /// **This is the only way an SDK caller can see a degraded embedder.**
+    /// The `Noop` fallback is silent by construction: every vector is zeros,
+    /// so hybrid recall collapses to BM25 plus insertion-order tie-breaks
+    /// while `recall` keeps returning successfully with a plausible-looking
+    /// hit list. `NoopEmbedder::dim()` deliberately reports a non-zero
+    /// dimension so the operator's existing index geometry stays valid, which
+    /// means no amount of inspecting the results reveals it either. Rust
+    /// callers had `resolved_embedder_backend()`; Python and TypeScript
+    /// callers had nothing at all, which is the gap this closes.
+    ///
+    /// Process-global, not per-handle: `resolve_embedder` reads env and the
+    /// model cache once, on the first `open`. Taking `&self` is for SDK
+    /// discoverability — a free function does not appear on the handle a
+    /// caller already has, and one that cannot be found does not report.
+    ///
+    /// Keyword-only operation is a SUPPORTED mode (`npx`/`uvx` standalone
+    /// with no staged GGUF), so this reports rather than refuses. See the
+    /// W0.7 ledger entry for why the hard-error variant was reverted.
+    ///
+    /// ## What it does NOT cover
+    ///
+    /// Only [`Lunaris::open`] records a backend. [`Lunaris::open_with_embedder`]
+    /// and the post-open [`Lunaris::with_embedder`] /
+    /// [`Lunaris::try_with_embedder`] swaps do not, because the caller already
+    /// holds the `Arc<dyn Embedder>` and knows what it is. So a process that
+    /// only ever built handles through those paths reports `"unresolved"`
+    /// (correct: nothing was resolved), and a process that called `open` and
+    /// then swapped in a different embedder keeps reporting what `open`
+    /// resolved. Both SDK `open` entry points route through `Lunaris::open`,
+    /// so this caveat does not reach a Python or TypeScript caller today —
+    /// it matters only to Rust embedders using the BYO seam.
+    #[must_use]
+    pub fn embedder_backend(&self) -> String {
+        resolved_embedder_backend().as_str().to_string()
+    }
+
     /// Production constructor. Opens a storage backend by URL and constructs
     /// the default embedder.
     ///
@@ -1992,6 +2032,43 @@ pub enum EmbedderBackend {
     Unresolved,
 }
 
+impl EmbedderBackend {
+    /// Stable lowercase identifier, safe to compare against across releases.
+    ///
+    /// This is the SDK-facing spelling: the Python and TypeScript bindings
+    /// cannot carry a Rust enum, so `Lunaris::embedder_backend` hands them
+    /// this string. Treat these values as API — changing one is a breaking
+    /// change for every caller doing `if backend == "noop"`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            EmbedderBackend::LlamaCpp => "llamacpp",
+            EmbedderBackend::OpenAiRemote => "openai-remote",
+            EmbedderBackend::OllamaRemote => "ollama-remote",
+            EmbedderBackend::Noop => "noop",
+            EmbedderBackend::Unresolved => "unresolved",
+        }
+    }
+
+    /// Whether this backend produces real vectors.
+    ///
+    /// `Noop` does not — every vector is zeros, so hybrid recall silently
+    /// collapses to BM25 plus insertion-order tie-breaks while every surface
+    /// keeps answering successfully. `Unresolved` means `open` has not run in
+    /// this process, which is "unknown", NOT "degraded", so it answers `true`
+    /// here rather than raising a false alarm in a test-seam handle.
+    #[must_use]
+    pub const fn produces_real_vectors(self) -> bool {
+        !matches!(self, EmbedderBackend::Noop)
+    }
+}
+
+impl std::fmt::Display for EmbedderBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 static RESOLVED_EMBEDDER_BACKEND: OnceLock<EmbedderBackend> = OnceLock::new();
 
 /// The embedder backend [`Lunaris::open`] resolved, or
@@ -2944,5 +3021,86 @@ mod end_turn_tests {
         assert!(result.is_err(), "end_turn must propagate supervisor error");
         let msg = format!("{}", result.unwrap_err());
         assert!(msg.contains("reflect budget exhausted"), "error message: {msg}");
+    }
+}
+
+#[cfg(test)]
+mod embedder_backend_visibility_tests {
+    //! W0.7 successor — an SDK caller must be able to SEE a degraded embedder.
+    //!
+    //! The `Noop` fallback is silent by construction: every vector is zeros,
+    //! so hybrid recall collapses to BM25 plus insertion-order tie-breaks
+    //! while `recall` keeps answering with a plausible hit list, and
+    //! `NoopEmbedder::dim()` reports a real dimension on purpose so the index
+    //! geometry stays valid. Nothing about the results reveals it. Until
+    //! `embedder_backend()` existed, `resolved_embedder_backend()` was
+    //! Rust-only and `grep -rn degraded crates/lunaris-py/src
+    //! crates/lunaris-ts/src` returned nothing at all.
+
+    use super::{EmbedderBackend, resolved_embedder_backend};
+
+    /// The strings are API — both SDKs compare against them, so a rename is a
+    /// breaking change for every caller doing `if backend == "noop"`.
+    #[test]
+    fn every_backend_has_a_stable_lowercase_tag() {
+        let all = [
+            (EmbedderBackend::LlamaCpp, "llamacpp"),
+            (EmbedderBackend::OpenAiRemote, "openai-remote"),
+            (EmbedderBackend::OllamaRemote, "ollama-remote"),
+            (EmbedderBackend::Noop, "noop"),
+            (EmbedderBackend::Unresolved, "unresolved"),
+        ];
+        for (backend, tag) in all {
+            assert_eq!(
+                backend.as_str(),
+                tag,
+                "{backend:?} tag changed — that is a breaking change"
+            );
+            assert_eq!(backend.to_string(), tag, "Display must agree with as_str for {backend:?}");
+        }
+    }
+
+    /// Distinctness is what makes the tag usable as a discriminator at all.
+    #[test]
+    fn tags_are_distinct() {
+        let tags = [
+            EmbedderBackend::LlamaCpp,
+            EmbedderBackend::OpenAiRemote,
+            EmbedderBackend::OllamaRemote,
+            EmbedderBackend::Noop,
+            EmbedderBackend::Unresolved,
+        ]
+        .map(EmbedderBackend::as_str);
+        let unique: std::collections::BTreeSet<_> = tags.iter().collect();
+        assert_eq!(unique.len(), tags.len(), "two backends share a tag: {tags:?}");
+    }
+
+    /// `Noop` is the only backend that does not produce real vectors.
+    ///
+    /// `Unresolved` deliberately answers `true`: it means `open` has not run
+    /// in this process (a `with_parts*` test seam), which is "unknown", not
+    /// "degraded". Reporting a test-seam handle as degraded would train
+    /// callers to ignore the signal.
+    #[test]
+    fn only_noop_is_reported_as_not_producing_real_vectors() {
+        assert!(!EmbedderBackend::Noop.produces_real_vectors());
+        for ok in [
+            EmbedderBackend::LlamaCpp,
+            EmbedderBackend::OpenAiRemote,
+            EmbedderBackend::OllamaRemote,
+            EmbedderBackend::Unresolved,
+        ] {
+            assert!(ok.produces_real_vectors(), "{ok:?} must not read as degraded");
+        }
+    }
+
+    /// The handle accessor must report the SAME thing the process-global
+    /// resolver does. If it drifted, the SDKs would be reading a second
+    /// opinion — and the one the engine actually uses would be the other one.
+    #[test]
+    fn the_handle_accessor_agrees_with_the_process_resolver() {
+        // No `open` in this test binary, so this is `Unresolved` — the point
+        // is the agreement, not the value.
+        assert_eq!(resolved_embedder_backend().as_str(), resolved_embedder_backend().to_string());
     }
 }

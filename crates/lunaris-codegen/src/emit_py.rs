@@ -943,7 +943,29 @@ fn py_sync_return_ty(ty: &IrTyRef, _fallible: bool) -> String {
         IrTyRef::Unit => "()".into(),
         IrTyRef::RefSelf => "Self".into(),
         IrTyRef::Named { name } => format!("Py{name}"),
-        other => format!("<{other:?}>"),
+        // Scalars pass straight through PyO3's `IntoPyObject` impls, and
+        // `py_sync_return_expr` falls through to a bare `Ok(out)` for all
+        // three — so signature and value agree with no conversion.
+        //
+        // `Json` is deliberately NOT here. It would need a declared type of
+        // `Py<PyAny>` and `Ok(out)` hands it a `serde_json::Value`, which does
+        // not compile; typing it correctly needs a matching arm in
+        // `py_sync_return_expr` and a method on the surface to test it
+        // against. Until one exists, the panic below is the honest answer.
+        IrTyRef::Str => "String".into(),
+        IrTyRef::Bool => "bool".into(),
+        IrTyRef::Usize => "usize".into(),
+        // This used to be `other => format!("<{other:?}>")`, which emitted a
+        // Rust-debug placeholder — `PyResult<<Str>>` — that reads like a
+        // generic and is not Rust. Nothing caught it until an SDK build ran,
+        // and the SDK crates are excluded from `cargo test --workspace`
+        // (cdylib link errors), so that meant CI at the earliest. A generator
+        // that cannot type a surface must refuse to emit it, loudly, at
+        // generation time.
+        other => panic!(
+            "lunaris-codegen: no Python sync-return arm for {other:?}. Add one to \
+             `py_sync_return_ty` (and `py_sync_return_expr`) rather than emitting a placeholder."
+        ),
     }
 }
 

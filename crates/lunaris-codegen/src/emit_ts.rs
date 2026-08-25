@@ -876,6 +876,20 @@ fn ts_sync_return_expr_rust(ty: &IrTyRef) -> String {
         // owned return into the host class. `Self` is the current impl's
         // class name, not a serialisable value.
         IrTyRef::RefSelf => "Ok(Self { inner: Arc::new(out) })".into(),
+        // `Str` and `Bool` cross the napi boundary as themselves. They must
+        // NOT go through `serde_json::to_value`: `ts_sync_return_ty_rust`
+        // spells the signature `String` / `bool`, and `to_value` yields a
+        // `serde_json::Value`, so the two disagree and the emitted glue does
+        // not compile. W0.7's `Lunaris::embedder_backend` was the first sync
+        // scalar return on the surface and it landed exactly here.
+        //
+        // `Usize` is NOT in this arm, and the omission is deliberate: the
+        // signature is `u32` (see `ts_param_ty_rust`) while the Rust method
+        // returns `usize`, so `Ok(out)` would not compile and `Ok(out as u32)`
+        // would silently truncate above 4 Gi. No surface method returns a sync
+        // `usize` today; the first one that does needs a decision about that
+        // narrowing, not a cast quietly added here.
+        IrTyRef::Str | IrTyRef::Bool => "Ok(out)".into(),
         _ => "serde_json::to_value(&out).map_err(napi_err)".into(),
     }
 }

@@ -38,7 +38,11 @@ impl PyLunaris {
     }
 
     /// Ingest one Episode through the hot path (graph-OFF default) or the graph-extraction path (toggle ON).
-    fn ingest<'py>(&self, py: Python<'py>, episode: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    fn ingest<'py>(
+        &self,
+        py: Python<'py>,
+        episode: &Bound<'_, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         let episode_owned: ::lunaris::Episode = pythonize::depythonize(episode)?;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
@@ -63,6 +67,12 @@ impl PyLunaris {
         })
     }
 
+    /// Which embedder backend this process resolved: "llamacpp", "openai-remote", "ollama-remote", "noop", or "unresolved". A "noop" backend produces zero vectors, so recall silently degrades to keyword-only while still returning results.
+    fn embedder_backend(&self) -> PyResult<String> {
+        let out = self.inner.embedder_backend();
+        Ok(out)
+    }
+
     /// Returns the current monotonic LSN — a cheap consistent snapshot marker. Implemented as no-op atomic_write(&[]).
     fn snapshot<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
@@ -71,7 +81,6 @@ impl PyLunaris {
             Python::attach(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))
         })
     }
-
 }
 
 /// Vector-search DSL operator; root-level constructor for kNN retrieval.
@@ -89,7 +98,6 @@ impl PyVector {
         let inner = ::lunaris::Vector::new(&index, k);
         Ok(Self { inner: Arc::new(inner) })
     }
-
 }
 
 /// Keyword / BM25 DSL operator; root-level constructor for lexical retrieval.
@@ -107,7 +115,6 @@ impl PyKeyword {
         let inner = ::lunaris::Keyword::bm25(&index, k);
         Ok(Self { inner: Arc::new(inner) })
     }
-
 }
 
 /// Graph-traversal DSL operator; anchors on a set of entity ids and expands N hops.
@@ -122,11 +129,14 @@ impl PyGraph {
     /// Anchor on `entity_ids` and traverse up to `hops` edges out in the Lunaris graph.
     #[staticmethod]
     fn anchored(entity_ids: &Bound<'_, PyAny>, hops: usize) -> PyResult<Self> {
-        let entity_ids_owned: Vec<::lunaris::EntityId> = pythonize::depythonize(entity_ids).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("entity_ids: {e}")))?;
-        let inner = ::lunaris::Graph::anchored(entity_ids_owned.into_iter().map(|e| (e, 1.0_f32)).collect(), hops);
+        let entity_ids_owned: Vec<::lunaris::EntityId> = pythonize::depythonize(entity_ids)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("entity_ids: {e}")))?;
+        let inner = ::lunaris::Graph::anchored(
+            entity_ids_owned.into_iter().map(|e| (e, 1.0_f32)).collect(),
+            hops,
+        );
         Ok(Self { inner: Arc::new(inner) })
     }
-
 }
 
 /// Chainable retrieval plan builder. Terminal .execute() runs the plan through the hydrate stage.
@@ -141,38 +151,52 @@ impl PyRetrievalBuilder {
     /// Compose `other` in parallel with the current plan; unions the result set.
     fn and(slf: PyRefMut<'_, Self>, other: &Bound<'_, PyAny>) -> PyResult<PyRetrievalBuilder> {
         // Builder methods consume self; we clone the inner Arc so Python can keep the prior handle alive.
-        let _ = slf; let _ = other;
-        Err(pyo3::exceptions::PyNotImplementedError::new_err("Use lunaris.RetrievalBuilder from lunaris.dsl for a working builder; the PyO3-frozen class method is not wired."))
+        let _ = slf;
+        let _ = other;
+        Err(pyo3::exceptions::PyNotImplementedError::new_err(
+            "Use lunaris.RetrievalBuilder from lunaris.dsl for a working builder; the PyO3-frozen class method is not wired.",
+        ))
     }
 
     /// Fuse two parallel branches via reciprocal-rank fusion (client-side or Moon-native depending on capabilities).
     fn fuse_rrf(slf: PyRefMut<'_, Self>, k: usize) -> PyResult<PyRetrievalBuilder> {
         // Builder methods consume self; we clone the inner Arc so Python can keep the prior handle alive.
-        let _ = slf; let _ = k;
-        Err(pyo3::exceptions::PyNotImplementedError::new_err("Use lunaris.RetrievalBuilder from lunaris.dsl for a working builder; the PyO3-frozen class method is not wired."))
+        let _ = slf;
+        let _ = k;
+        Err(pyo3::exceptions::PyNotImplementedError::new_err(
+            "Use lunaris.RetrievalBuilder from lunaris.dsl for a working builder; the PyO3-frozen class method is not wired.",
+        ))
     }
 
     /// Keep only the top `n` hits after fusion.
     fn top(slf: PyRefMut<'_, Self>, n: usize) -> PyResult<PyRetrievalBuilder> {
         // Builder methods consume self; we clone the inner Arc so Python can keep the prior handle alive.
-        let _ = slf; let _ = n;
-        Err(pyo3::exceptions::PyNotImplementedError::new_err("Use lunaris.RetrievalBuilder from lunaris.dsl for a working builder; the PyO3-frozen class method is not wired."))
+        let _ = slf;
+        let _ = n;
+        Err(pyo3::exceptions::PyNotImplementedError::new_err(
+            "Use lunaris.RetrievalBuilder from lunaris.dsl for a working builder; the PyO3-frozen class method is not wired.",
+        ))
     }
 
     /// Attach a filter predicate (parsed via filter_str) to the query; fails on a malformed predicate string.
     fn filter(slf: PyRefMut<'_, Self>, pred: String) -> PyResult<PyRetrievalBuilder> {
         // Builder methods consume self; we clone the inner Arc so Python can keep the prior handle alive.
-        let _ = slf; let _ = &pred;
-        Err(pyo3::exceptions::PyNotImplementedError::new_err("Use lunaris.RetrievalBuilder from lunaris.dsl for a working builder; the PyO3-frozen class method is not wired."))
+        let _ = slf;
+        let _ = &pred;
+        Err(pyo3::exceptions::PyNotImplementedError::new_err(
+            "Use lunaris.RetrievalBuilder from lunaris.dsl for a working builder; the PyO3-frozen class method is not wired.",
+        ))
     }
 
     /// Pin the query to an as-of-HLC time-travel view (SQL:2011 bi-temporal read).
     fn as_of(slf: PyRefMut<'_, Self>, hlc: &Bound<'_, PyAny>) -> PyResult<PyRetrievalBuilder> {
         // Builder methods consume self; we clone the inner Arc so Python can keep the prior handle alive.
-        let _ = slf; let _ = hlc;
-        Err(pyo3::exceptions::PyNotImplementedError::new_err("Use lunaris.RetrievalBuilder from lunaris.dsl for a working builder; the PyO3-frozen class method is not wired."))
+        let _ = slf;
+        let _ = hlc;
+        Err(pyo3::exceptions::PyNotImplementedError::new_err(
+            "Use lunaris.RetrievalBuilder from lunaris.dsl for a working builder; the PyO3-frozen class method is not wired.",
+        ))
     }
-
 }
 
 /// Runtime toggle for the graph-extraction pipeline (default OFF per blueprint §5.2). The toggle method is the canonical single-item entry in the binding surface.
@@ -186,10 +210,13 @@ pub struct PyGraphPipelineHandle {
 impl PyGraphPipelineHandle {
     /// Flip the pipeline ON or OFF. Idempotent. Emits `tracing::info!` only on real state transitions (D-12).
     fn toggle(&self, on: bool) -> PyResult<()> {
-        if on { self.inner.enable(); } else { self.inner.disable(); }
+        if on {
+            self.inner.enable();
+        } else {
+            self.inner.disable();
+        }
         Ok(())
     }
-
 }
 
 /// Runtime toggle for the ACT-R consolidator worker (default OFF per blueprint §5.1). Mirrors GraphPipelineHandle's single-item toggle surface.
@@ -203,10 +230,13 @@ pub struct PyConsolidatorPipelineHandle {
 impl PyConsolidatorPipelineHandle {
     /// Flip the pipeline ON or OFF. Idempotent. Emits `tracing::info!` only on real state transitions (D-12).
     fn toggle(&self, on: bool) -> PyResult<()> {
-        if on { self.inner.enable(); } else { self.inner.disable(); }
+        if on {
+            self.inner.enable();
+        } else {
+            self.inner.disable();
+        }
         Ok(())
     }
-
 }
 
 /// Registers every generated `#[pyclass]` for module `lunaris`.
@@ -233,9 +263,14 @@ impl PyChatAgentMemory {
     #[staticmethod]
     fn new(lunaris: &PyLunaris, scope: String, user_id: String) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
-            .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
-        let inner = ::lunaris_recipes::conversational::ChatAgentMemory::new(lunaris_owned, scope_owned, &user_id);
+        let scope_owned: ::lunaris_core::scope::Scope =
+            ::lunaris_core::scope::Scope::new(&scope)
+                .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
+        let inner = ::lunaris_recipes::conversational::ChatAgentMemory::new(
+            lunaris_owned,
+            scope_owned,
+            &user_id,
+        );
         Ok(Self { inner: Arc::new(inner) })
     }
 
@@ -256,7 +291,6 @@ impl PyChatAgentMemory {
             Python::attach(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
         })
     }
-
 }
 
 /// Cross-session conversational wrapper with a per-user scoped `.consolidate()` cross-session promotion pass.
@@ -272,14 +306,24 @@ impl PyMultiTurnConversation {
     #[staticmethod]
     fn new(lunaris: &PyLunaris, scope: String, user_id: String) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
-            .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
-        let inner = ::lunaris_recipes::conversational::MultiTurnConversation::new(lunaris_owned, scope_owned, &user_id);
+        let scope_owned: ::lunaris_core::scope::Scope =
+            ::lunaris_core::scope::Scope::new(&scope)
+                .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
+        let inner = ::lunaris_recipes::conversational::MultiTurnConversation::new(
+            lunaris_owned,
+            scope_owned,
+            &user_id,
+        );
         Ok(Self { inner: Arc::new(inner) })
     }
 
     /// Record a turn for `thread_id` (session id).
-    fn remember<'py>(&self, py: Python<'py>, turn: String, thread_id: String) -> PyResult<Bound<'py, PyAny>> {
+    fn remember<'py>(
+        &self,
+        py: Python<'py>,
+        turn: String,
+        thread_id: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let out = inner.remember(&turn, &thread_id).await.map_err(py_err)?;
@@ -304,7 +348,6 @@ impl PyMultiTurnConversation {
             Python::attach(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
         })
     }
-
 }
 
 /// Slack archive wrapper. Holds a root MessageStream scoped at `slack:archive/`.
@@ -320,17 +363,26 @@ impl PySlackArchive {
     #[staticmethod]
     fn new(lunaris: &PyLunaris, scope: String) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
-            .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
-        let inner = ::lunaris_recipes::conversational::SlackArchive::new(lunaris_owned, scope_owned);
+        let scope_owned: ::lunaris_core::scope::Scope =
+            ::lunaris_core::scope::Scope::new(&scope)
+                .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
+        let inner =
+            ::lunaris_recipes::conversational::SlackArchive::new(lunaris_owned, scope_owned);
         Ok(Self { inner: Arc::new(inner) })
     }
 
     /// Ingest one message into `channel` authored by `participant_id`.
-    fn ingest_channel<'py>(&self, py: Python<'py>, channel: String, participant_id: String, message: String) -> PyResult<Bound<'py, PyAny>> {
+    fn ingest_channel<'py>(
+        &self,
+        py: Python<'py>,
+        channel: String,
+        participant_id: String,
+        message: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let out = inner.ingest_channel(&channel, &participant_id, &message).await.map_err(py_err)?;
+            let out =
+                inner.ingest_channel(&channel, &participant_id, &message).await.map_err(py_err)?;
             Python::attach(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))
         })
     }
@@ -355,7 +407,6 @@ impl PySlackArchive {
         let out = self.inner.user(&id);
         Ok(PySlackArchiveQuery { inner: Arc::new(out) })
     }
-
 }
 
 /// Narrowed query builder returned by SlackArchive::channel / SlackArchive::user.
@@ -381,7 +432,6 @@ impl PySlackArchiveQuery {
             Python::attach(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
         })
     }
-
 }
 
 /// Thread-scoped email wrapper with an opt-in graph-pipeline builder.
@@ -397,14 +447,22 @@ impl PyEmailThreading {
     #[staticmethod]
     fn new(lunaris: &PyLunaris, scope: String) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
-            .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
-        let inner = ::lunaris_recipes::conversational::EmailThreading::new(lunaris_owned, scope_owned);
+        let scope_owned: ::lunaris_core::scope::Scope =
+            ::lunaris_core::scope::Scope::new(&scope)
+                .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
+        let inner =
+            ::lunaris_recipes::conversational::EmailThreading::new(lunaris_owned, scope_owned);
         Ok(Self { inner: Arc::new(inner) })
     }
 
     /// Ingest one email into `root_id`'s thread, authored by `from`.
-    fn ingest<'py>(&self, py: Python<'py>, root_id: String, from: String, body: String) -> PyResult<Bound<'py, PyAny>> {
+    fn ingest<'py>(
+        &self,
+        py: Python<'py>,
+        root_id: String,
+        from: String,
+        body: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let out = inner.ingest(&root_id, &from, &body).await.map_err(py_err)?;
@@ -432,7 +490,6 @@ impl PyEmailThreading {
         let out = self.inner.as_ref().clone().with_graph_pipeline(enable);
         Ok(PyEmailThreading { inner: Arc::new(out) })
     }
-
 }
 
 /// Meeting-notes wrapper with heading-scoped ingest and an opt-in graph-pipeline builder.
@@ -448,14 +505,21 @@ impl PyMeetingNotesMemory {
     #[staticmethod]
     fn new(lunaris: &PyLunaris, scope: String) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
-            .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
-        let inner = ::lunaris_recipes::conversational::MeetingNotesMemory::new(lunaris_owned, scope_owned);
+        let scope_owned: ::lunaris_core::scope::Scope =
+            ::lunaris_core::scope::Scope::new(&scope)
+                .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
+        let inner =
+            ::lunaris_recipes::conversational::MeetingNotesMemory::new(lunaris_owned, scope_owned);
         Ok(Self { inner: Arc::new(inner) })
     }
 
     /// Record one note under `heading` (thread_id) with `body` content.
-    fn note<'py>(&self, py: Python<'py>, heading: String, body: String) -> PyResult<Bound<'py, PyAny>> {
+    fn note<'py>(
+        &self,
+        py: Python<'py>,
+        heading: String,
+        body: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let out = inner.note(&heading, &body).await.map_err(py_err)?;
@@ -474,7 +538,8 @@ impl PyMeetingNotesMemory {
 
     /// Narrow to notes attributed to `attendees`. Returns a MeetingNotesQuery.
     fn attendees(&self, attendees: &Bound<'_, PyAny>) -> PyResult<PyMeetingNotesQuery> {
-        let attendees_owned: Vec<String> = pythonize::depythonize(attendees).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("attendees: {e}")))?;
+        let attendees_owned: Vec<String> = pythonize::depythonize(attendees)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("attendees: {e}")))?;
         let out = self.inner.attendees(attendees_owned);
         Ok(PyMeetingNotesQuery { inner: Arc::new(out) })
     }
@@ -484,7 +549,6 @@ impl PyMeetingNotesMemory {
         let out = self.inner.as_ref().clone().with_graph_pipeline(enable);
         Ok(PyMeetingNotesMemory { inner: Arc::new(out) })
     }
-
 }
 
 /// Narrowed query builder returned by MeetingNotesMemory::attendees.
@@ -504,11 +568,13 @@ impl PyMeetingNotesQuery {
             Python::attach(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
         })
     }
-
 }
 
 /// Registers every generated `#[pyclass]` for module `lunaris_recipes.conversational`.
-pub(crate) fn register_generated_lunaris_recipes_conversational(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+pub(crate) fn register_generated_lunaris_recipes_conversational(
+    _py: Python<'_>,
+    m: &Bound<'_, PyModule>,
+) -> PyResult<()> {
     m.add_class::<PyChatAgentMemory>()?;
     m.add_class::<PyMultiTurnConversation>()?;
     m.add_class::<PySlackArchive>()?;
@@ -531,16 +597,26 @@ impl PyDocumentKnowledgeBase {
     #[staticmethod]
     fn new(lunaris: &PyLunaris, scope: String, source_prefix: String) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
-            .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
-        let inner = ::lunaris_recipes::documentary::DocumentKnowledgeBase::new(lunaris_owned, scope_owned, &source_prefix);
+        let scope_owned: ::lunaris_core::scope::Scope =
+            ::lunaris_core::scope::Scope::new(&scope)
+                .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
+        let inner = ::lunaris_recipes::documentary::DocumentKnowledgeBase::new(
+            lunaris_owned,
+            scope_owned,
+            &source_prefix,
+        );
         Ok(Self { inner: Arc::new(inner) })
     }
 
     /// Ingest chunked `(content, metadata)` pairs.
-    fn ingest<'py>(&self, py: Python<'py>, chunks: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    fn ingest<'py>(
+        &self,
+        py: Python<'py>,
+        chunks: &Bound<'_, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
-        let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = pythonize::depythonize(chunks)?;
+        let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> =
+            pythonize::depythonize(chunks)?;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             inner.ingest(chunks_owned).await.map_err(py_err)?;
             Ok(Python::attach(|py| py.None()))
@@ -549,7 +625,8 @@ impl PyDocumentKnowledgeBase {
 
     /// Add an equality filter on a metadata field.
     fn filter(&self, field: String, value: &Bound<'_, PyAny>) -> PyResult<PyDocumentKnowledgeBase> {
-        let value_owned: serde_json::Value = pythonize::depythonize(value).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("value: {e}")))?;
+        let value_owned: serde_json::Value = pythonize::depythonize(value)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("value: {e}")))?;
         let out = self.inner.as_ref().clone().filter(&field, value_owned);
         Ok(PyDocumentKnowledgeBase { inner: Arc::new(out) })
     }
@@ -568,7 +645,6 @@ impl PyDocumentKnowledgeBase {
             Python::attach(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
         })
     }
-
 }
 
 /// Research-paper corpus wrapper with opt-in citation graph.
@@ -584,9 +660,14 @@ impl PyResearchPaperCorpus {
     #[staticmethod]
     fn new(lunaris: &PyLunaris, scope: String, source_prefix: String) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
-            .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
-        let inner = ::lunaris_recipes::documentary::ResearchPaperCorpus::new(lunaris_owned, scope_owned, &source_prefix);
+        let scope_owned: ::lunaris_core::scope::Scope =
+            ::lunaris_core::scope::Scope::new(&scope)
+                .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
+        let inner = ::lunaris_recipes::documentary::ResearchPaperCorpus::new(
+            lunaris_owned,
+            scope_owned,
+            &source_prefix,
+        );
         Ok(Self { inner: Arc::new(inner) })
     }
 
@@ -597,9 +678,14 @@ impl PyResearchPaperCorpus {
     }
 
     /// Ingest chunked `(content, metadata)` pairs.
-    fn ingest<'py>(&self, py: Python<'py>, chunks: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    fn ingest<'py>(
+        &self,
+        py: Python<'py>,
+        chunks: &Bound<'_, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
-        let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = pythonize::depythonize(chunks)?;
+        let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> =
+            pythonize::depythonize(chunks)?;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             inner.ingest(chunks_owned).await.map_err(py_err)?;
             Ok(Python::attach(|py| py.None()))
@@ -614,7 +700,6 @@ impl PyResearchPaperCorpus {
             Python::attach(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
         })
     }
-
 }
 
 /// Code-repository memory wrapper. Stores commit SHA in Episode metadata and recalls point-in-time function bodies.
@@ -630,25 +715,45 @@ impl PyCodeRepoMemory {
     #[staticmethod]
     fn new(lunaris: &PyLunaris, scope: String, repo_prefix: String) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
-            .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
-        let inner = ::lunaris_recipes::documentary::CodeRepoMemory::new(lunaris_owned, scope_owned, &repo_prefix);
+        let scope_owned: ::lunaris_core::scope::Scope =
+            ::lunaris_core::scope::Scope::new(&scope)
+                .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
+        let inner = ::lunaris_recipes::documentary::CodeRepoMemory::new(
+            lunaris_owned,
+            scope_owned,
+            &repo_prefix,
+        );
         Ok(Self { inner: Arc::new(inner) })
     }
 
     /// Ingest one commit as a batch of `(function_body, metadata)` chunks.
-    fn ingest_commit<'py>(&self, py: Python<'py>, commit_sha: String, committer_date_unix_ms: &Bound<'_, PyAny>, chunks: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    fn ingest_commit<'py>(
+        &self,
+        py: Python<'py>,
+        commit_sha: String,
+        committer_date_unix_ms: &Bound<'_, PyAny>,
+        chunks: &Bound<'_, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         let committer_date_unix_ms_owned: i64 = pythonize::depythonize(committer_date_unix_ms)?;
-        let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = pythonize::depythonize(chunks)?;
+        let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> =
+            pythonize::depythonize(chunks)?;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            inner.ingest_commit(&commit_sha, committer_date_unix_ms_owned, chunks_owned).await.map_err(py_err)?;
+            inner
+                .ingest_commit(&commit_sha, committer_date_unix_ms_owned, chunks_owned)
+                .await
+                .map_err(py_err)?;
             Ok(Python::attach(|py| py.None()))
         })
     }
 
     /// Recall at point-in-time `as_of`.
-    fn recall<'py>(&self, py: Python<'py>, query: String, as_of: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    fn recall<'py>(
+        &self,
+        py: Python<'py>,
+        query: String,
+        as_of: &Bound<'_, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         let as_of_owned: ::lunaris::Hlc = pythonize::depythonize(as_of)?;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
@@ -656,7 +761,6 @@ impl PyCodeRepoMemory {
             Python::attach(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
         })
     }
-
 }
 
 /// Timeline-reconstruction wrapper. Two-call composition of DocumentCorpus + TemporalQuery<Documents>.
@@ -672,16 +776,26 @@ impl PyTimelineReconstruction {
     #[staticmethod]
     fn new(lunaris: &PyLunaris, scope: String, source_prefix: String) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
-            .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
-        let inner = ::lunaris_recipes::documentary::TimelineReconstruction::new(lunaris_owned, scope_owned, &source_prefix);
+        let scope_owned: ::lunaris_core::scope::Scope =
+            ::lunaris_core::scope::Scope::new(&scope)
+                .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
+        let inner = ::lunaris_recipes::documentary::TimelineReconstruction::new(
+            lunaris_owned,
+            scope_owned,
+            &source_prefix,
+        );
         Ok(Self { inner: Arc::new(inner) })
     }
 
     /// Ingest timeline events as chunked `(content, metadata)` pairs.
-    fn ingest<'py>(&self, py: Python<'py>, events: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    fn ingest<'py>(
+        &self,
+        py: Python<'py>,
+        events: &Bound<'_, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
-        let events_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = pythonize::depythonize(events)?;
+        let events_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> =
+            pythonize::depythonize(events)?;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             inner.ingest(events_owned).await.map_err(py_err)?;
             Ok(Python::attach(|py| py.None()))
@@ -689,7 +803,13 @@ impl PyTimelineReconstruction {
     }
 
     /// Recall all events in `[lo, hi)` — lower-inclusive, upper-exclusive (11-01 boundary semantics).
-    fn between<'py>(&self, py: Python<'py>, query: String, lo: &Bound<'_, PyAny>, hi: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    fn between<'py>(
+        &self,
+        py: Python<'py>,
+        query: String,
+        lo: &Bound<'_, PyAny>,
+        hi: &Bound<'_, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         let lo_owned: ::lunaris::Hlc = pythonize::depythonize(lo)?;
         let hi_owned: ::lunaris::Hlc = pythonize::depythonize(hi)?;
@@ -700,7 +820,12 @@ impl PyTimelineReconstruction {
     }
 
     /// Recall the snapshot at `ts`.
-    fn as_of<'py>(&self, py: Python<'py>, query: String, ts: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    fn as_of<'py>(
+        &self,
+        py: Python<'py>,
+        query: String,
+        ts: &Bound<'_, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         let ts_owned: ::lunaris::Hlc = pythonize::depythonize(ts)?;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
@@ -708,7 +833,6 @@ impl PyTimelineReconstruction {
             Python::attach(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
         })
     }
-
 }
 
 /// Customer-support history wrapper. Owns both a tickets DocumentCorpus and a chats MessageStream.
@@ -724,9 +848,11 @@ impl PyCustomerSupportHistory {
     #[staticmethod]
     fn new(lunaris: &PyLunaris, scope: String) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
-            .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
-        let inner = ::lunaris_recipes::documentary::CustomerSupportHistory::new(lunaris_owned, scope_owned);
+        let scope_owned: ::lunaris_core::scope::Scope =
+            ::lunaris_core::scope::Scope::new(&scope)
+                .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
+        let inner =
+            ::lunaris_recipes::documentary::CustomerSupportHistory::new(lunaris_owned, scope_owned);
         Ok(Self { inner: Arc::new(inner) })
     }
 
@@ -737,7 +863,12 @@ impl PyCustomerSupportHistory {
     }
 
     /// Ingest one ticket body. `ticket_id` is stamped into metadata.
-    fn ingest_ticket<'py>(&self, py: Python<'py>, ticket_id: String, body: String) -> PyResult<Bound<'py, PyAny>> {
+    fn ingest_ticket<'py>(
+        &self,
+        py: Python<'py>,
+        ticket_id: String,
+        body: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             inner.ingest_ticket(&ticket_id, &body).await.map_err(py_err)?;
@@ -746,10 +877,20 @@ impl PyCustomerSupportHistory {
     }
 
     /// Ingest one chat-turn. `ticket_id/turn_idx` slug lands in the MessageStream thread_id.
-    fn ingest_chat<'py>(&self, py: Python<'py>, ticket_id: String, turn_idx: usize, participant: String, msg: String) -> PyResult<Bound<'py, PyAny>> {
+    fn ingest_chat<'py>(
+        &self,
+        py: Python<'py>,
+        ticket_id: String,
+        turn_idx: usize,
+        participant: String,
+        msg: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let out = inner.ingest_chat(&ticket_id, turn_idx, &participant, &msg).await.map_err(py_err)?;
+            let out = inner
+                .ingest_chat(&ticket_id, turn_idx, &participant, &msg)
+                .await
+                .map_err(py_err)?;
             Python::attach(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))
         })
     }
@@ -762,11 +903,13 @@ impl PyCustomerSupportHistory {
             Python::attach(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
         })
     }
-
 }
 
 /// Registers every generated `#[pyclass]` for module `lunaris_recipes.documentary`.
-pub(crate) fn register_generated_lunaris_recipes_documentary(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+pub(crate) fn register_generated_lunaris_recipes_documentary(
+    _py: Python<'_>,
+    m: &Bound<'_, PyModule>,
+) -> PyResult<()> {
     m.add_class::<PyDocumentKnowledgeBase>()?;
     m.add_class::<PyResearchPaperCorpus>()?;
     m.add_class::<PyCodeRepoMemory>()?;

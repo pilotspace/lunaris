@@ -63,6 +63,12 @@ impl PyLunaris {
         })
     }
 
+    /// Which embedder backend this process resolved: "llamacpp", "openai-remote", "ollama-remote", "noop", or "unresolved". A "noop" backend produces zero vectors, so recall silently degrades to keyword-only while still returning results.
+    fn embedder_backend(&self) -> PyResult<String> {
+        let out = self.inner.embedder_backend();
+        Ok(out)
+    }
+
     /// Returns the current monotonic LSN — a cheap consistent snapshot marker. Implemented as no-op atomic_write(&[]).
     fn snapshot<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();

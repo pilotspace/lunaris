@@ -76,6 +76,14 @@ rust_crate_path = "::lunaris"
     doc = "Single-entry-point erasure API (OPS-01/02/03/04). Soft-delete default; hard mode requires a confirmation token."
 
     [[module.type.methods]]
+    name = "embedder_backend"
+    is_async = "no"
+    receiver = "ref_self"
+    params = []
+    returns = { ty = { kind = "str" }, fallible = false }
+    doc = "Which embedder backend this process resolved: \"llamacpp\", \"openai-remote\", \"ollama-remote\", \"noop\", or \"unresolved\". A \"noop\" backend produces zero vectors, so recall silently degrades to keyword-only while still returning results."
+
+    [[module.type.methods]]
     name = "snapshot"
     is_async = "yes"
     receiver = "ref_self"
