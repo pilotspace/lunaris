@@ -201,20 +201,26 @@ fn helios_p50_bench(c: &mut Criterion) {
                     let path = &paths[i % paths.len()];
                     match op {
                         Op::Read => {
-                            let _ = pad.read(path).await.expect("read");
+                            let _ = pad.read(path).await.unwrap_or_else(|e| die("read", &e));
                         }
                         Op::Write => {
                             let new_path = format!("note-{}.md", Ulid::new());
                             let _ = pad
                                 .write(&new_path, "lorem ipsum helios bench payload")
                                 .await
-                                .expect("write");
+                                .unwrap_or_else(|e| die("write", &e));
                         }
                         Op::Edit => {
-                            let _ = pad.edit(path, "lorem", "lorem-edited").await.expect("edit");
+                            let _ = pad
+                                .edit(path, "lorem", "lorem-edited")
+                                .await
+                                .unwrap_or_else(|e| die("edit", &e));
                         }
                         Op::Grep => {
-                            let _ = pad.grep("lorem", GREP_TOP_K).await.expect("grep");
+                            let _ = pad
+                                .grep("lorem", GREP_TOP_K)
+                                .await
+                                .unwrap_or_else(|e| die("grep", &e));
                         }
                     }
                 }
@@ -352,6 +358,36 @@ fn moon_version_probe(label: &str) -> String {
 /// 0.7.0 deleted the Postgres backend, so `label` is always "moon" and this
 /// probe can only ever answer "n/a". Kept as a named constant rather than
 /// deleted so the provenance record its caller emits keeps the same shape.
+/// Abort the bench run with a message an operator can act on.
+///
+/// Criterion is mid-measurement when an op fails, so there is no way to
+/// downgrade this to a group-level skip: the sample set is already partial.
+/// Aborting loudly is right — a partial sample would be graded as if it were a
+/// full one. What was wrong before was the *message*: `.expect("write")`
+/// surfaced a raw `MOONERR` and left the reader to guess.
+///
+/// The backpressure case is the one worth naming. Criterion drives this loop
+/// as fast as the machine allows — 60k iterations in ~25 s — which is nothing
+/// like the agent-paced tool calls the 20 ms budget describes. When Moon
+/// answers `busy: compaction backlog`, the store could not absorb Criterion's
+/// write rate. That is a store-throughput fact, NOT evidence that tool-call
+/// overhead missed its p50. Measured reproducibly on an external
+/// USB-backed data dir, on a freshly created empty store.
+fn die(op: &str, e: &impl std::fmt::Display) -> ! {
+    let msg = e.to_string();
+    if msg.contains("compaction backlog") || msg.contains("busy:") {
+        panic!(
+            "helios_p50 {op} failed: the store backpressured mid-measurement.\n\
+             \n  {msg}\n\n\
+             Moon could not absorb Criterion's write rate (~60k ops in ~25 s). This is a\n\
+             store-throughput limit, not a tool-call-overhead p50 miss — the 20 ms budget\n\
+             describes agent-paced calls, not a saturation loop. Re-run against a store on\n\
+             local SSD; an external/USB-backed --dir reproduces this every time."
+        );
+    }
+    panic!("helios_p50 {op} failed: {msg}");
+}
+
 fn pg_version_probe(_label: &str) -> String {
     "n/a".into()
 }
