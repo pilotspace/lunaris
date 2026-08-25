@@ -1,58 +1,62 @@
-//! Plan 02-04 Task 3 — Phase 2 latency budget enforcement.
-//! Plan 03-04 — extended with 2 INGEST-06 graph-on rows.
-//! Plan 12-03 — extended with 2 HELIOS-05 `helios_smoke::helios_p50` rows
-//! (p50 ≤ 20 ms tool-call overhead on Moon + Postgres; p99 budget intentionally
-//! untightened per CONTEXT.md D-09). Total rows = 10 (6 Phase 2 + 2 Phase 3
-//! + 2 Phase 12).
+//! Blueprint §4.1 / §4.2 latency budget enforcement — Moon-only.
 //!
 //! Reads Criterion's `target/criterion/<group>/<bench>_<label>/new/{estimates,sample}.json`
-//! and asserts the measured p50 + p99 satisfy the blueprint §4.1 / §4.2 budget
-//! contract. Failure messages include actionable detail
+//! and asserts the measured p50 + p99 satisfy the budget contract. Failure
+//! messages carry actionable detail
 //! (`"ingest_12kb_md/moon p50 73.0 ms > 50.0 ms budget — over by +46%"`).
+//!
+//! ## Moon-only since 0.7.0 (re-derived — ship-plan W4.9)
+//!
+//! The table shipped 10 rows: 5 Moon and 5 Postgres, plus a soft-fail rule
+//! that downgraded a Postgres row missing budget by >2× to a `tracing::warn!`.
+//! 0.7.0 deleted the Postgres backend. `PG_URL` is set by nothing, the scheme
+//! is rejected, and every Postgres row would resolve to SKIP forever — so
+//! half the contract graded nothing and the soft-fail branch was unreachable.
+//! Both are gone. Five Moon rows remain, and `the_table_names_no_retired_backend`
+//! keeps it that way.
+//!
+//! ## An empty sweep is not a passing sweep
+//!
+//! The budgets are read off disk, so with no Criterion data every row skips,
+//! there is nothing left to fail on, and the suite reports success having
+//! measured nothing. That was its entire history: it is gated behind
+//! `--features budget-it`, no workflow passed that feature, and no workflow
+//! ran the four benches it reads. [`Sweep::verdict`] now fails on a sweep that
+//! measured nothing, and on a sweep that measured only some rows — a row that
+//! cannot be measured where the gate runs does not belong in the table.
 //!
 //! ## How to run
 //!
 //! ```bash
-//! # First populate Criterion data (live backends required):
-//! MOON_URL=moon://localhost:6380 PG_URL=postgres://lunaris:lunaris@localhost/lunaris \
-//!   cargo bench -p lunaris-bench
+//! # 1. A single-shard Moon on the bench port (NEVER 6379/6380/6381).
+//! moon --port 6399 --shards 1 --dir /tmp/moon-bench &
 //!
-//! # Then enforce the budget (passes/fails based on the data on disk):
+//! # 2. Populate Criterion data. The 1M-fact recall corpus is a one-time
+//! #    ~5-10 min build per store, cached by fingerprint afterwards.
+//! MOON_URL=moon://127.0.0.1:6399 cargo bench -p lunaris-bench \
+//!   --bench ingest_hot_path --bench recall_hot_path \
+//!   --bench atomic_write_hot_path --bench helios_p50
+//!
+//! # 3. Enforce.
 //! cargo test -p lunaris-bench --features budget-it --test budget_assertions
 //! ```
 //!
-//! ## Skip discipline
-//!
-//! `enforces_phase2_budgets` walks the budget table; for any (group, bench,
-//! label) triple WITHOUT JSON data on disk, it emits `eprintln!("SKIP …")`
-//! and continues — missing data is "no measurement", NOT "passing measurement".
-//! `asserts_present_estimates` writes synthetic JSON to a temp directory and
-//! tests the parse + comparison logic; runs in default (no-feature) mode.
-//!
-//! ## 2× soft-fail rule (ROADMAP risk register)
-//!
-//! Per the plan's `<critical_constraints>`: when Moon is within budget AND
-//! Postgres misses by >2×, emit `tracing::warn!("Postgres p50 {actual}ms > 2x
-//! budget; per ROADMAP risk register, ship Phase 2 on Moon-only and document
-//! gap")` and continue (do NOT panic). Phase 2 ships on Moon-only with the
-//! gap documented.
-//!
-//! When Moon is OVER budget, the assertion panics regardless of Postgres
-//! (Moon is the v0 default; we cannot ship with Moon over budget).
+//! Step 3 reads `$CARGO_TARGET_DIR/criterion`, so it must run with the same
+//! `CARGO_TARGET_DIR` as step 2.
 
 #![cfg(feature = "budget-it")]
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-// ----- Phase 2 budget table -----
+// ----- budget table -----
 //
 // Each row: (group, bench_id, label, p50_budget_ns, p99_budget_ns).
-// p99 = 0 means "no p99 budget specified for this row" (RETRIEVE-12 only
-// sets p50 on Postgres; the p99 assertion is skipped).
+// `label` is always "moon" — see `the_table_names_no_retired_backend`.
+// p99 = 0 means "no p99 budget for this row; skip the p99 check".
 
 const BUDGET_TABLE: &[BudgetRow] = &[
-    // INGEST-05 — ingest p50 ≤ 50 ms / p99 ≤ 110 ms (both backends, 12 KB markdown).
+    // INGEST-05 — ingest p50 ≤ 50 ms / p99 ≤ 110 ms (12 KB markdown).
     BudgetRow {
         group: "ingest_hot_path",
         bench: "ingest_12kb_md",
@@ -60,14 +64,8 @@ const BUDGET_TABLE: &[BudgetRow] = &[
         p50_budget_ns: 50_000_000,
         p99_budget_ns: 110_000_000,
     },
-    BudgetRow {
-        group: "ingest_hot_path",
-        bench: "ingest_12kb_md",
-        label: "postgres",
-        p50_budget_ns: 50_000_000,
-        p99_budget_ns: 110_000_000,
-    },
-    // RETRIEVE-11 — recall p50 ≤ 25 ms / p99 ≤ 80 ms on Moon, 1M facts.
+    // RETRIEVE-11 — recall p50 ≤ 25 ms / p99 ≤ 80 ms, 1M facts. This is the
+    // row CLAUDE.md calls the core value contract.
     BudgetRow {
         group: "recall_hot_path",
         bench: "recall_q",
@@ -75,15 +73,7 @@ const BUDGET_TABLE: &[BudgetRow] = &[
         p50_budget_ns: 25_000_000,
         p99_budget_ns: 80_000_000,
     },
-    // RETRIEVE-12 — recall p50 ≤ 60 ms on Postgres, 1M facts (no p99 budget).
-    BudgetRow {
-        group: "recall_hot_path",
-        bench: "recall_q",
-        label: "postgres",
-        p50_budget_ns: 60_000_000,
-        p99_budget_ns: 0,
-    },
-    // Blueprint §4.1 atomic_write — 3 ms p50 / 12 ms p99 on Moon.
+    // Blueprint §4.1 atomic_write — 3 ms p50 / 12 ms p99.
     BudgetRow {
         group: "atomic_write_hot_path",
         bench: "atomic_write",
@@ -91,21 +81,7 @@ const BUDGET_TABLE: &[BudgetRow] = &[
         p50_budget_ns: 3_000_000,
         p99_budget_ns: 12_000_000,
     },
-    // Postgres native floor (~8 ms p50; no p99 budget enforced).
-    BudgetRow {
-        group: "atomic_write_hot_path",
-        bench: "atomic_write",
-        label: "postgres",
-        p50_budget_ns: 8_000_000,
-        p99_budget_ns: 0,
-    },
-    // INGEST-06 — graph-on ingest p50 ≤ 300 ms / p99 ≤ 570 ms (blueprint §4.1, Plan 03-04).
-    // Per ROADMAP Phase 3 success criterion #4: "With graph ON, ingest p50 ≤ 300 ms /
-    // p99 ≤ 570 ms holds per blueprint §4.1 latency budget."
-    //
-    // Soft-fail rule (Plan 02-04 decision): Moon over budget = hard panic;
-    // Postgres ≤2× over = hard panic; Postgres >2× over = warn + continue.
-    // Same logic the existing 6 rows use — no special-casing needed.
+    // INGEST-06 — graph-on ingest p50 ≤ 300 ms / p99 ≤ 570 ms (blueprint §4.1).
     BudgetRow {
         group: "ingest_hot_path",
         bench: "ingest_12kb_md_graph_on",
@@ -113,32 +89,14 @@ const BUDGET_TABLE: &[BudgetRow] = &[
         p50_budget_ns: 300_000_000,
         p99_budget_ns: 570_000_000,
     },
-    BudgetRow {
-        group: "ingest_hot_path",
-        bench: "ingest_12kb_md_graph_on",
-        label: "postgres",
-        p50_budget_ns: 300_000_000,
-        p99_budget_ns: 570_000_000,
-    },
-    // HELIOS-05 (Plan 12-03, CONTEXT.md D-07/D-09) — p50 ≤ 20 ms tool-call
-    // overhead on Moon for the HeliosScratchpad v2 surface (Read:Write:Edit:Grep
-    // mix per helios-rfc §5.3). `p99_budget_ns = 0` per D-09: p99 stays on the
-    // v0.1.0 ≤ 60 ms Postgres budget and is NOT tightened by Phase 12.
+    // HELIOS-05 (CONTEXT.md D-07/D-09) — p50 ≤ 20 ms tool-call overhead for
+    // the scratchpad surface. `p99_budget_ns = 0` per D-09: p99 was never
+    // tightened by Phase 12 and there is no longer a second backend to
+    // inherit a p99 budget from, so this row is p50-only by construction.
     BudgetRow {
         group: "helios_smoke",
         bench: "helios_p50",
         label: "moon",
-        p50_budget_ns: 20_000_000,
-        p99_budget_ns: 0,
-    },
-    // HELIOS-05 — p50 ≤ 20 ms tool-call overhead on Postgres. Same soft-fail
-    // rule already encoded below for Postgres rows applies (>2× budget →
-    // tracing::warn + continue; ≤2× → hard fail so the gap stays visible
-    // during the soft-fail window).
-    BudgetRow {
-        group: "helios_smoke",
-        bench: "helios_p50",
-        label: "postgres",
         p50_budget_ns: 20_000_000,
         p99_budget_ns: 0,
     },
@@ -152,9 +110,9 @@ struct BudgetRow {
     /// p50 budget in nanoseconds. NEVER zero — every row has a p50 budget.
     p50_budget_ns: u64,
     /// p99 budget in nanoseconds. ZERO means "no p99 budget for this row;
-    /// skip the p99 check". RETRIEVE-12 + the Postgres atomic_write floor
-    /// both use this escape (the blueprint only specifies p50 for those
-    /// rows).
+    /// skip the p99 check". Only `helios_smoke::helios_p50` uses this escape:
+    /// CONTEXT.md D-09 left its p99 untightened, and the Postgres row it would
+    /// have inherited a p99 from no longer exists.
     p99_budget_ns: u64,
 }
 
@@ -179,89 +137,112 @@ enum CheckOutcome {
 
 // ----- assertions -----
 
-/// Walks the [`BUDGET_TABLE`] and panics with an actionable message when
-/// any (Moon) row's p50 OR p99 misses budget.
+/// The result of walking [`BUDGET_TABLE`] against one Criterion root.
 ///
-/// Postgres rows that miss by >2× emit a `tracing::warn!` and continue
-/// (per ROADMAP risk register: ship Moon-only, document Postgres gap).
-/// Postgres rows that miss by ≤2× still panic — we want the gap visible
-/// during the soft-fail window so it's not silently accepted forever.
-///
-/// Plan 03-04 extended [`BUDGET_TABLE`] from 6 → 8 rows (2 INGEST-06 graph-on).
-/// Plan 12-03 extends 8 → 10 rows: adds the 2 HELIOS-05 `helios_smoke::helios_p50`
-/// entries (Moon + Postgres at 20 ms p50; p99 untightened per CONTEXT.md D-09).
-/// The walker logic is unchanged — every new row inherits the same soft-fail
-/// rule (Postgres >2× budget → `tracing::warn!` + continue; Moon over budget →
-/// always hard-fail). Live numbers populate when CI / developer runs
-/// `MOON_URL=… PG_URL=… cargo bench -p lunaris-bench`; without live data each
-/// row resolves to SKIP cleanly (asserted by
-/// `missing_estimates_skip_without_panic`).
-#[test]
-fn enforces_phase2_and_phase3_budgets() {
-    init_tracing();
-    let target_root = criterion_root();
-    let mut hard_failures: Vec<String> = Vec::new();
-    let mut soft_warnings: Vec<String> = Vec::new();
-    let mut skipped: Vec<String> = Vec::new();
-    let mut passed: Vec<String> = Vec::new();
+/// Split out of the test body so the "measured nothing" case is reachable
+/// from a unit test with a synthetic root. While this logic lived inline,
+/// the only way to exercise it was to have real bench data on disk — which
+/// is precisely the situation it exists to detect the absence of.
+#[derive(Debug, Default)]
+struct Sweep {
+    passed: Vec<String>,
+    skipped: Vec<String>,
+    hard_failures: Vec<String>,
+}
 
+impl Sweep {
+    /// Rows that produced a real number. A row that skipped is NOT measured.
+    fn measured(&self) -> usize {
+        self.passed.len() + self.hard_failures.len()
+    }
+
+    /// `Ok(())` only when every row in the table produced a number and every
+    /// number was inside budget.
+    ///
+    /// The zero-measurement arm is the load-bearing one. Criterion data is
+    /// read off disk, so a sweep with no data on disk skips every row and has
+    /// nothing to fail on — and a test that fails on nothing passes.
+    fn verdict(&self) -> Result<(), String> {
+        if self.measured() == 0 {
+            return Err(format!(
+                "budget sweep measured NOTHING — {} row(s) skipped, 0 measured.\n\
+                 An empty sweep is not a passing sweep. Populate Criterion data first:\n  \
+                 MOON_URL=moon://127.0.0.1:6399 cargo bench -p lunaris-bench \\\n    \
+                 --bench ingest_hot_path --bench recall_hot_path \\\n    \
+                 --bench atomic_write_hot_path --bench helios_p50\n\
+                 Skipped rows:\n{}",
+                self.skipped.len(),
+                self.skipped.join("\n")
+            ));
+        }
+        if !self.skipped.is_empty() {
+            return Err(format!(
+                "budget sweep is INCOMPLETE — {} of {} rows had no data.\n\
+                 Every row in BUDGET_TABLE must be measurable in the environment that runs\n\
+                 this gate; a row nobody can measure does not belong in the table.\n{}",
+                self.skipped.len(),
+                BUDGET_TABLE.len(),
+                self.skipped.join("\n")
+            ));
+        }
+        if !self.hard_failures.is_empty() {
+            return Err(format!(
+                "latency budget enforcement FAILED — {} miss(es):\n{}",
+                self.hard_failures.len(),
+                self.hard_failures.join("\n")
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Walk [`BUDGET_TABLE`] against `target_root` and classify every row.
+fn sweep_budgets(target_root: &Path) -> Sweep {
+    let mut sweep = Sweep::default();
     for row in BUDGET_TABLE {
-        match check_budget(&target_root, *row) {
+        match check_budget(target_root, *row) {
             Ok(CheckOutcome::Skipped(why)) => {
-                skipped.push(format!("{}/{}/{} → SKIP ({why})", row.group, row.bench, row.label));
+                sweep
+                    .skipped
+                    .push(format!("{}/{}/{} → SKIP ({why})", row.group, row.bench, row.label));
             }
             Ok(CheckOutcome::Reported(rep)) => {
                 let id = format!("{}/{}/{}", rep.group, rep.bench, rep.label);
                 if rep.p50_within_budget && rep.p99_within_budget {
-                    passed.push(format!(
+                    sweep.passed.push(format!(
                         "{id} → p50 {:.2} ms ≤ {:.2} ms; p99 {:.2} ms ≤ {:.2} ms",
                         rep.p50_ms, rep.p50_budget_ms, rep.p99_ms, rep.p99_budget_ms
                     ));
-                    continue;
+                } else {
+                    sweep.hard_failures.push(format!("{id} → {}", format_failure(&rep)));
                 }
-                let msg = format_failure(&rep);
-                if row.label == "postgres" && row.p50_budget_ns > 0 {
-                    let p50_overshoot = rep.p50_ms / rep.p50_budget_ms;
-                    if p50_overshoot > 2.0 {
-                        tracing::warn!(
-                            id = %id,
-                            p50_ms = rep.p50_ms,
-                            budget_ms = rep.p50_budget_ms,
-                            overshoot = p50_overshoot,
-                            "Postgres p50 > 2x budget; per ROADMAP risk register, ship on Moon-only and document gap"
-                        );
-                        soft_warnings.push(format!("{id} (>2x soft-fail) → {msg}"));
-                        continue;
-                    }
-                }
-                hard_failures.push(format!("{id} → {msg}"));
             }
             Err(e) => {
-                hard_failures
+                sweep
+                    .hard_failures
                     .push(format!("{}/{}/{} → check error: {e}", row.group, row.bench, row.label));
             }
         }
     }
+    sweep
+}
 
-    print_report(&passed, &skipped, &soft_warnings, &hard_failures);
-
-    if !hard_failures.is_empty() {
-        panic!(
-            "Phase 2 + Phase 3 + Phase 12 latency budget enforcement FAILED — {} hard miss(es):\n{}",
-            hard_failures.len(),
-            hard_failures.join("\n")
-        );
+/// Walks [`BUDGET_TABLE`] and fails when any row misses its blueprint
+/// §4.1/§4.2 budget — or when the sweep had nothing to measure.
+#[test]
+fn enforces_moon_latency_budgets() {
+    init_tracing();
+    let sweep = sweep_budgets(&criterion_root());
+    print_report(&sweep);
+    if let Err(msg) = sweep.verdict() {
+        panic!("{msg}");
     }
 }
 
-/// Plan 03-04 — verifies the BUDGET_TABLE has the 2 INGEST-06 graph-on
-/// rows (Moon + Postgres) at the expected 300 ms p50 / 570 ms p99 and
-/// the total row count is 8 (6 Phase 2 baseline + 2 Phase 3 graph-on).
-///
-/// Always runs (not gated behind live-backend data) so the BUDGET_TABLE
-/// shape itself is CI-checkable even when no Criterion JSON exists on disk.
+/// Shape check for the INGEST-06 graph-on row. Runs without live data, so
+/// CI catches a table drift even when no backend is reachable.
 #[test]
-fn budget_table_has_ingest_06_graph_on_rows() {
+fn budget_table_has_the_ingest_06_graph_on_row() {
     let moon_row = BUDGET_TABLE
         .iter()
         .find(|r| {
@@ -273,36 +254,28 @@ fn budget_table_has_ingest_06_graph_on_rows() {
     assert_eq!(moon_row.p50_budget_ns, 300_000_000, "blueprint §4.1 graph-on p50 = 300 ms");
     assert_eq!(moon_row.p99_budget_ns, 570_000_000, "blueprint §4.1 graph-on p99 = 570 ms");
 
-    let pg_row = BUDGET_TABLE
-        .iter()
-        .find(|r| {
-            r.group == "ingest_hot_path"
-                && r.bench == "ingest_12kb_md_graph_on"
-                && r.label == "postgres"
-        })
-        .expect("INGEST-06 Postgres row must exist");
-    assert_eq!(pg_row.p50_budget_ns, 300_000_000, "blueprint §4.1 graph-on p50 = 300 ms");
-    assert_eq!(pg_row.p99_budget_ns, 570_000_000, "blueprint §4.1 graph-on p99 = 570 ms");
-
-    // Total row count: 6 baseline (Plan 02-04) + 2 graph-on (Plan 03-04) +
-    // 2 HELIOS-05 (Plan 12-03) = 10. The assertion stays in the
-    // `assert_eq!(BUDGET_TABLE.len(), 10, ...)` form so the plan's grep
-    // gate `grep -c 'BUDGET_TABLE.len(), 10'` finds it verbatim.
-    assert_eq!(
-        BUDGET_TABLE.len(),
-        10,
-        "budget table row count check (6 Phase 2 + 2 Phase 3 + 2 Phase 12)"
-    );
+    // 0.7.0 is Moon-only. The row count is pinned so a re-added backend row
+    // has to come with a deliberate edit here, and the grep gate
+    // `grep -c 'BUDGET_TABLE.len(), 5'` finds it verbatim.
+    assert_eq!(BUDGET_TABLE.len(), 5, "budget table row count (Moon-only since 0.7.0)");
 }
 
-/// Plan 12-03 HELIOS-05 — asserts the BUDGET_TABLE contains the two
-/// `helios_smoke::helios_p50` rows (Moon + Postgres) at exactly the 20 ms p50
-/// budget CONTEXT.md D-07 specifies, with `p99_budget_ns == 0` per D-09
-/// (p99 intentionally untightened).
-///
-/// Always runs — this check does NOT depend on a live Criterion sample on
-/// disk, so CI catches a row-shape drift even when no backends are
-/// reachable.
+/// 0.7.0 deleted the Postgres backend. A `postgres` row cannot be measured —
+/// `PG_URL` is never set and the URL scheme is rejected — so every such row
+/// would resolve to SKIP forever. Under the sweep's completeness rule that is
+/// no longer a quiet no-op: it fails the gate. Pin the absence directly so
+/// the reason is stated once, here, rather than rediscovered from a
+/// confusing skip.
+#[test]
+fn the_table_names_no_retired_backend() {
+    let retired: Vec<&str> =
+        BUDGET_TABLE.iter().map(|r| r.label).filter(|l| *l != "moon").collect();
+    assert!(retired.is_empty(), "0.7.0 is Moon-only, but BUDGET_TABLE still names: {retired:?}");
+}
+
+/// HELIOS-05 shape check — the `helios_smoke::helios_p50` row sits at exactly
+/// the 20 ms p50 CONTEXT.md D-07 specifies, with `p99_budget_ns == 0` per D-09
+/// (p99 intentionally untightened). Runs without live data.
 #[test]
 fn verifies_helios_budget_row_present() {
     let moon_row = BUDGET_TABLE
@@ -311,25 +284,131 @@ fn verifies_helios_budget_row_present() {
         .expect("HELIOS-05 Moon row must exist");
     assert_eq!(
         moon_row.p50_budget_ns, 20_000_000,
-        "HELIOS-05 / CONTEXT.md D-07: Moon p50 budget = 20 ms"
+        "HELIOS-05 / CONTEXT.md D-07: p50 budget = 20 ms"
     );
     assert_eq!(
         moon_row.p99_budget_ns, 0,
-        "HELIOS-05 / CONTEXT.md D-09: Moon p99 intentionally untightened"
+        "HELIOS-05 / CONTEXT.md D-09: p99 intentionally untightened"
+    );
+}
+
+/// Populate synthetic Criterion data for every row in [`BUDGET_TABLE`],
+/// each at `fraction` of its own p50 budget.
+///
+/// The p99 sample is written at the same fraction of the p99 budget, except
+/// for rows with `p99_budget_ns == 0` (no p99 contract), which get a sample
+/// derived from p50 so the parse path still has something to read.
+fn populate_all_rows(root: &Path, fraction: f64) {
+    for row in BUDGET_TABLE {
+        let p50 = row.p50_budget_ns as f64 * fraction;
+        write_synthetic_estimates(root, row.group, row.bench, row.label, p50);
+        let top =
+            if row.p99_budget_ns > 0 { row.p99_budget_ns as f64 * fraction } else { p50 * 1.2 };
+        write_synthetic_sample(
+            root,
+            row.group,
+            row.bench,
+            row.label,
+            &[p50 * 0.9, p50, p50 * 1.05, top * 0.95, top],
+        );
+    }
+}
+
+/// The gate's reason for existing.
+///
+/// With no Criterion data on disk every row skips, so there is nothing left
+/// to fail on — and a test that fails on nothing passes. This suite reported
+/// exactly that for its entire life, while no workflow ran the benches it
+/// reads. A sweep that measured nothing must not be a pass.
+#[test]
+fn a_sweep_that_measured_nothing_is_not_a_pass() {
+    let empty = tempdir_for_test("budget_sweep_no_data");
+    let sweep = sweep_budgets(&empty);
+
+    // Fixture validity first: prove the sweep really did measure nothing,
+    // so a later Err cannot be mistaken for the guard firing on real data.
+    assert_eq!(sweep.measured(), 0, "fixture: an empty root must measure nothing");
+    assert_eq!(sweep.skipped.len(), BUDGET_TABLE.len(), "fixture: every row must skip");
+
+    let verdict = sweep.verdict();
+    let err = verdict.expect_err("a sweep that measured nothing must not report success");
+    assert!(err.contains("measured NOTHING"), "message must name the cause: {err}");
+    assert!(err.contains("cargo bench"), "message must say how to fix it: {err}");
+}
+
+/// Half a sweep is the same disease in a smaller dose: the rows with data
+/// pass, the rows without quietly vanish, and the gate reports green over a
+/// contract it only partly checked.
+#[test]
+fn a_partial_sweep_is_not_a_pass() {
+    let root = tempdir_for_test("budget_sweep_partial");
+    let row = BUDGET_TABLE[0];
+    write_synthetic_estimates(
+        &root,
+        row.group,
+        row.bench,
+        row.label,
+        row.p50_budget_ns as f64 * 0.5,
+    );
+    write_synthetic_sample(
+        &root,
+        row.group,
+        row.bench,
+        row.label,
+        &[row.p50_budget_ns as f64 * 0.5, row.p99_budget_ns as f64 * 0.5],
     );
 
-    let pg_row = BUDGET_TABLE
-        .iter()
-        .find(|r| r.group == "helios_smoke" && r.bench == "helios_p50" && r.label == "postgres")
-        .expect("HELIOS-05 Postgres row must exist");
-    assert_eq!(
-        pg_row.p50_budget_ns, 20_000_000,
-        "HELIOS-05 / CONTEXT.md D-07: Postgres p50 budget = 20 ms"
+    let sweep = sweep_budgets(&root);
+    assert_eq!(sweep.measured(), 1, "fixture: exactly one row has data");
+    assert_eq!(sweep.hard_failures.len(), 0, "fixture: the measured row is inside budget");
+
+    let err = sweep.verdict().expect_err("an incomplete sweep must not report success");
+    assert!(err.contains("INCOMPLETE"), "message must name the cause: {err}");
+    assert!(err.contains("recall_hot_path"), "message must name a row that had no data: {err}");
+}
+
+/// The discriminating positive. Without it, a `verdict` hard-wired to `Err`
+/// would satisfy both tests above — "never passes" and "passes only when the
+/// contract is met" are indistinguishable until something is asked to pass.
+#[test]
+fn a_complete_in_budget_sweep_passes() {
+    let root = tempdir_for_test("budget_sweep_complete_ok");
+    populate_all_rows(&root, 0.5);
+
+    let sweep = sweep_budgets(&root);
+    assert_eq!(sweep.measured(), BUDGET_TABLE.len(), "fixture: every row measured");
+    assert_eq!(sweep.skipped.len(), 0, "fixture: nothing skipped");
+    assert!(
+        sweep.verdict().is_ok(),
+        "every row measured at half its budget must pass: {:?}",
+        sweep.verdict()
     );
-    assert_eq!(
-        pg_row.p99_budget_ns, 0,
-        "HELIOS-05 / CONTEXT.md D-09: Postgres p99 intentionally untightened"
+}
+
+/// A complete sweep still fails when a row misses, and the message names the
+/// row — otherwise the gate is a bare "something regressed".
+#[test]
+fn a_complete_sweep_with_one_miss_fails_and_names_the_row() {
+    let root = tempdir_for_test("budget_sweep_one_miss");
+    populate_all_rows(&root, 0.5);
+    // Blow out exactly one row: the recall p50, which is the core contract.
+    let recall =
+        BUDGET_TABLE.iter().find(|r| r.group == "recall_hot_path").expect("recall row exists");
+    write_synthetic_estimates(
+        &root,
+        recall.group,
+        recall.bench,
+        recall.label,
+        recall.p50_budget_ns as f64 * 3.0,
     );
+
+    let sweep = sweep_budgets(&root);
+    assert_eq!(sweep.measured(), BUDGET_TABLE.len(), "fixture: every row still measured");
+    assert_eq!(sweep.skipped.len(), 0, "fixture: nothing skipped");
+
+    let err = sweep.verdict().expect_err("an over-budget row must fail the sweep");
+    assert!(err.contains("recall_q"), "message must name the offending bench: {err}");
+    assert!(!err.contains("INCOMPLETE"), "this is a budget miss, not a coverage gap: {err}");
 }
 
 /// Synthetic-JSON unit test — verifies the parse + comparison logic without
@@ -563,28 +642,21 @@ fn format_failure(rep: &BudgetReport) -> String {
     parts.join("; ")
 }
 
-fn print_report(
-    passed: &[String],
-    skipped: &[String],
-    soft_warnings: &[String],
-    hard_failures: &[String],
-) {
-    eprintln!("\n=== Phase 2 Latency Budget Report ===");
-    eprintln!("Passed:        {}", passed.len());
-    eprintln!("Skipped:       {}", skipped.len());
-    eprintln!("Soft warnings: {} (Postgres >2x; ship Moon-only per ROADMAP)", soft_warnings.len());
-    eprintln!("Hard failures: {}", hard_failures.len());
+fn print_report(sweep: &Sweep) {
+    eprintln!("\n=== Moon latency budget report (blueprint §4.1/§4.2) ===");
+    eprintln!("Rows in table: {}", BUDGET_TABLE.len());
+    eprintln!("Measured:      {}", sweep.measured());
+    eprintln!("Passed:        {}", sweep.passed.len());
+    eprintln!("Skipped:       {}", sweep.skipped.len());
+    eprintln!("Hard failures: {}", sweep.hard_failures.len());
     eprintln!();
-    for p in passed {
+    for p in &sweep.passed {
         eprintln!("  PASS   {p}");
     }
-    for s in skipped {
+    for s in &sweep.skipped {
         eprintln!("  SKIP   {s}");
     }
-    for w in soft_warnings {
-        eprintln!("  SOFT   {w}");
-    }
-    for f in hard_failures {
+    for f in &sweep.hard_failures {
         eprintln!("  HARD   {f}");
     }
     eprintln!();

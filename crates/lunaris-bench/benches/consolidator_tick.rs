@@ -101,8 +101,7 @@ struct Backend {
     env: &'static str,
 }
 
-const BACKENDS: &[Backend] =
-    &[Backend { label: "moon", env: "MOON_URL" }, Backend { label: "postgres", env: "PG_URL" }];
+const BACKENDS: &[Backend] = &[Backend { label: "moon", env: "MOON_URL" }];
 
 /// Build a deterministic 1K-event debounce batch spanning `EPISODE_FANOUT`
 /// distinct episodes. Seeded from a fixed ULID so the bench is reproducible
