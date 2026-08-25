@@ -33,6 +33,13 @@ on:
   pull_request:
     # Opt-in on PRs: the bench costs a llama.cpp compile + ~700 MB of GGUF
     # download. Label the PR `perf-bench` to run it.
+    #
+    # `labeled` is REQUIRED. Without an explicit `types:` the trigger defaults
+    # to [opened, synchronize, reopened], so applying the label fires nothing
+    # and the job stays `skipping` until someone happens to push again. The
+    # `perf-bench` label did not even exist in this repo until 2026-08-25, so
+    # this opt-in path had never been taken.
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
     inputs:
       save-baseline:

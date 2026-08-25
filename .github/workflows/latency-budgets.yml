@@ -40,6 +40,12 @@ on:
       - "Cargo.lock"
   pull_request:
     # Opt-in: label the PR `perf-bench`.
+    #
+    # `labeled` is REQUIRED here. Without an explicit `types:` the trigger
+    # defaults to [opened, synchronize, reopened], so adding the label fires
+    # no event at all and the job stays `skipping` until the next push. An
+    # opt-in you cannot opt into is not an opt-in.
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
 
 permissions:
