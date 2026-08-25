@@ -22,7 +22,6 @@
 
 #![forbid(unsafe_code)]
 
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use lunaris_core::bitemporal::BiTemporal;
@@ -182,27 +181,23 @@ fn build_episode_ops(ep: &Episode) -> anyhow::Result<Vec<WriteOp>> {
     ])
 }
 
-/// Deterministic 768-d stub embedder. Mirrors the canonical
-/// `lunaris_core::embedder::StubEmbedder::det_vec` algorithm (seed hashed
-/// with `.max(1)`, LCG, output in `[-1, 1]`) so fixture-stored embeddings
-/// sit in the same metric space as production `StubEmbedder(768)` output.
+/// Deterministic 768-d stub embedder — [`lunaris_core::det_vec`] itself, so
+/// fixture-stored embeddings sit in exactly the metric space production
+/// `StubEmbedder(768)` produces.
+///
+/// This was the third hand-copy of that algorithm in the workspace (core,
+/// lunaris-bench, here), each with a doc claiming to mirror the canonical one
+/// and each carrying its bug: a `>> 33` that left every "uniform [-1, 1]"
+/// coordinate in [-1, 0]. `stub_embed_matches_canonical_det_vec_algorithm`
+/// compared this copy against core and passed throughout, because two copies
+/// of the same mistake agree perfectly. Matching is not the same as being
+/// right, so the copy is gone and the test now guards against a new one.
 ///
 /// Exposed at `pub(crate)` so both the fixture ingest path AND the parity
 /// query path in `storage::as_of_parity` compute matching vectors for the
 /// same input string.
 pub(crate) fn stub_embed(s: &str) -> Vec<f32> {
-    let mut h = DefaultHasher::new();
-    s.hash(&mut h);
-    let mut state = h.finish().max(1);
-    (0..EMBED_DIM)
-        .map(|_| {
-            state = state
-                .wrapping_mul(6_364_136_223_846_793_005)
-                .wrapping_add(1_442_695_040_888_963_407);
-            let v = ((state >> 33) as u32) as f32 / u32::MAX as f32;
-            v * 2.0 - 1.0
-        })
-        .collect()
+    lunaris_core::det_vec(s, EMBED_DIM)
 }
 
 // ---------------------------------------------------------------------------
