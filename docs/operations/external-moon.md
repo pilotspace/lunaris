@@ -117,7 +117,7 @@ A packaged install ships `/etc/moon/moon.conf` +
 
 Override `command`. The image's baked-in CMD is
 
-```
+```text
 moon --bind 0.0.0.0 --port 6379 --shards 0 --dir /data --protected-mode no
 ```
 
@@ -148,7 +148,11 @@ connection and gates on the `moon_version` field
 (`crates/lunaris-storage-moon/src/client.rs:413-468`). The floor is
 
 ```rust
-pub const MIN_MOON_VERSION: MoonVersion = MoonVersion { major: 0, minor: 8, patch: 5 };
+# fn main() {
+use lunaris_storage_moon::version::{MIN_MOON_VERSION, MoonVersion};
+
+assert_eq!(MIN_MOON_VERSION, MoonVersion { major: 0, minor: 8, patch: 5 });
+# }
 ```
 
 `crates/lunaris-storage-moon/src/version.rs:86`.
@@ -159,7 +163,7 @@ pub const MIN_MOON_VERSION: MoonVersion = MoonVersion { major: 0, minor: 8, patc
 with `Lunaris::open(moon://…) failed: …` (`main.rs:43-49`). The message is
 verbatim (`client.rs:447-462`):
 
-```
+```text
 moon: unsupported server version — <host>:<port> reports moon_version 0.8.1,
 but this Lunaris build requires >= 0.8.5. Older Moon builds are missing command
 surface Lunaris depends on (FT.* vector/BM25 search, graph Cypher, TEMPORAL.*),
@@ -215,7 +219,7 @@ reports.
 
 ### URL form
 
-```
+```text
 moon://<host>:<port>[?ws=<workspace>][&quant=<tier>][&ef=<n>]
 ```
 
@@ -299,7 +303,7 @@ restarting the process does not un-wedge a downstream store
 multi-shard Moon fails immediately with a message naming the fix, instead of
 coming up healthy and failing mid-ingest hours later:
 
-```
+```text
 moon: MULTI-SHARD server detected at 10.0.0.7:6379 — the server rejected a
 co-location probe: Pipeline failure: [(Index 2, error: CrossSlot: Keys in
 MULTI/EXEC don't hash to the same shard)]. … To proceed: restart Moon with
@@ -319,7 +323,7 @@ costs nothing per operation. Implementation and full policy table:
 (the INGEST-04 single-`atomic_write` invariant). Moon rejects a TXN that spans
 shards, so on a `--shards > 1` instance the very first ingest fails:
 
-```
+```text
 storage: backend: moon: redis error: ResponseError:
   TXN does not support cross-shard writes -- use hash tags {tag} to co-locate keys
 ```
@@ -391,7 +395,7 @@ casually under a live Lunaris.
 The [backup/restore runbook](backup-restore.md) is written against a Moon
 running:
 
-```
+```text
 --shards 1 --appendonly yes --appendfsync <everysec|always>
 ```
 

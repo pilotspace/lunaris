@@ -87,7 +87,7 @@ line that is still on the registry.
 
 `lunaris-memory 0.5.0` declares both as **non-optional, normal** dependencies:
 
-```
+```text
 $ curl -s https://crates.io/api/v1/crates/lunaris-memory/0.5.0/dependencies
 lunaris-embed-native   ^0.5.0   kind=normal   optional=false
 lunaris-rerank-native  ^0.5.0   kind=normal   optional=false
@@ -211,7 +211,7 @@ underneath moved several moon releases forward.
 
 Measured 2026-08-15, published `moondb 0.2.1` versus the pinned `v0.8.5` source:
 
-```
+```text
 $ diff -rq <published 0.2.1>/src <vendor/moon/sdk/rust>/src
 Files ... cache.rs and ... cache.rs differ
 Files ... client.rs and ... client.rs differ

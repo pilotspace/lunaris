@@ -10,7 +10,7 @@ One backend ships: **Moon** (Redis-compatible, with `FT.*` native vector + BM25 
 
 ### Mental model
 
-```
+```text
           Episode
              |
              v
@@ -87,7 +87,13 @@ Features (see the `[features]` section of `crates/lunaris/Cargo.toml`):
 - `embed-remote` — air-gap escape hatch: route the embedder through an existing Ollama instance via `LUNARIS_EMBEDDER_OLLAMA_URL` (operator-only, resolved after the llama.cpp step).
 - `moon-it`, `pg-it` — gate live-backend integration tests.
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use lunaris::{EntityId, Graph, Keyword, Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+# let scope = Scope::new("acme-workspace")?;
+# let _ = &scope;
 use std::sync::Arc;
 
 #[tokio::main]
@@ -97,13 +103,21 @@ async fn main() -> Result<(), lunaris::LunarisError> {
     println!("{lunaris:?}");
     Ok(())
 }
+# Ok(()) }
 ```
 
 If all you need is the raw `Arc<dyn StoragePort>` (Plan 5 conformance harness, low-level tests):
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use lunaris::{EntityId, Graph, Keyword, Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+# let scope = Scope::new("acme-workspace")?;
+# let _ = &scope;
 let storage = lunaris::open("moon://localhost:6380").await?;
 // storage is Arc<dyn StoragePort>. No ingest/recall surface; you drive atomic_write, read_as_of, etc.
+# Ok(()) }
 ```
 
 URL schemes are matched at `crates/lunaris/src/open.rs` and `crates/lunaris/src/handle.rs`. Only `moon://` is accepted; every other scheme — including the retired `postgres://` / `postgresql://` / `sqlite://` / `memory://` — returns `LunarisError::Storage(StorageError::UnsupportedScheme(_))` carrying the migration link.
@@ -130,7 +144,9 @@ Every write begins with `Lunaris::ingest`. One call = one `atomic_write` on the 
 
 The shape below paraphrases the canonical smoke test at `crates/lunaris/tests/ingest_smoke.rs:91-108`. In production you would use a real storage + embedder; here we use `StubEmbedder` so the test needs no model weights.
 
-```rust
+```rust,no_run
+# use lunaris::Scope;
+# fn my_storage() -> std::sync::Arc<dyn lunaris::StoragePort> { unimplemented!() }
 use std::sync::Arc;
 
 use lunaris::{Lunaris, Episode, HlcClock, StoragePort, Embedder};
@@ -144,7 +160,8 @@ async fn main() -> Result<(), lunaris::LunarisError> {
     // Test form — matches tests/ingest_smoke.rs:91-108. Replace `my_storage()`
     // with any Arc<dyn StoragePort> (an in-memory recording fixture in tests,
     // or MoonStorage::connect directly in benches).
-    let storage: Arc<dyn StoragePort> = Arc::new(my_storage());
+    let scope = Scope::new("acme-workspace")?;
+    let storage: Arc<dyn StoragePort> = my_storage();
     let clock = HlcClock::new(0);
     let embedder: Arc<dyn Embedder> = Arc::new(StubEmbedder::new(768));
     let lunaris = Lunaris::with_parts(storage, embedder, clock.clone());
@@ -152,6 +169,7 @@ async fn main() -> Result<(), lunaris::LunarisError> {
     // Episode::new fills id = Ulid::new(), bt = BiTemporal::now(clock),
     // metadata = {} — see crates/lunaris-core/src/primitives.rs:27.
     let ep = Episode::new(
+        scope,
         "notes.md",
         "# Notes\nThe quick brown fox jumps over the lazy dog.",
         &lunaris.clock(),
@@ -185,7 +203,13 @@ Every read beyond a single-key fetch. The DSL composes four leaf operators — `
 
 #### Step 1 — pure vector
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use lunaris::{EntityId, Graph, Keyword, Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+# let scope = Scope::new("acme-workspace")?;
+# let _ = &scope;
 use lunaris::{Query, Vector};
 
 let hits = lunaris
@@ -193,13 +217,20 @@ let hits = lunaris
     .with_root(Vector::new("chunks", 30).top(5))
     .execute(Query::text("brown fox"))
     .await?;
+# Ok(()) }
 ```
 
 `Vector::new("chunks", 30)` asks the backend for the top 30 chunks by vector similarity; `.top(5)` caps the final result. The `chunks` index is one of four whitelisted names (`chunks | entities | facts | communities`).
 
 #### Step 2 — add BM25
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use lunaris::{EntityId, Graph, Keyword, Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+# let scope = Scope::new("acme-workspace")?;
+# let _ = &scope;
 use lunaris::{Keyword, Query, Vector};
 
 let hits = lunaris
@@ -211,13 +242,20 @@ let hits = lunaris
     )
     .execute(Query::text("brown fox"))
     .await?;
+# Ok(()) }
 ```
 
 `Keyword::bm25("chunks", 30)` is defined at `crates/lunaris-retrieve/src/operators/keyword.rs:25`. `.and(...)` is the combinator from `combinators.rs:36` — both retrievers run and their results flow into the next operator.
 
 #### Step 3 — fuse with reciprocal rank
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use lunaris::{EntityId, Graph, Keyword, Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+# let scope = Scope::new("acme-workspace")?;
+# let _ = &scope;
 let hits = lunaris
     .recall()
     .with_root(
@@ -228,13 +266,20 @@ let hits = lunaris
     )
     .execute(Query::text("brown fox"))
     .await?;
+# Ok(()) }
 ```
 
 `fuse_rrf` detects the (Vector + Keyword(BM25)) shape on the same index and dispatches to Moon's native `text().hybrid_search` — **one** round trip instead of two (`crates/lunaris-retrieve/src/operators/fuse.rs`, governed by `StorageCapabilities::native_rrf` in `crates/lunaris-core/src/storage.rs`). A backend that does not declare the capability fuses client-side in the same operator; the API is identical either way.
 
 #### Step 4 — rerank
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use lunaris::{EntityId, Graph, Keyword, Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+# let scope = Scope::new("acme-workspace")?;
+# let _ = &scope;
 let hits = lunaris
     .recall()
     .with_root(
@@ -247,6 +292,7 @@ let hits = lunaris
     .top(5)
     .execute(Query::text("brown fox"))
     .await?;
+# Ok(()) }
 ```
 
 `RetrievalBuilder::rerank` and `::top` are both builder-level (`crates/lunaris-retrieve/src/builder.rs:162-171`). The reranker is cross-encoder bge-reranker-v2-m3 by default; when weights are missing, `Lunaris::open` installs `NoopReranker` and `handle.reranker()` still returns a working `Arc<dyn Reranker>` that passes scores through unchanged (`crates/lunaris/src/handle.rs:494-515`).
@@ -271,7 +317,13 @@ After the graph pipeline is enabled and you've ingested Episodes — chunks extr
 
 ### Code
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use lunaris::{EntityId, Graph, Keyword, Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+# let scope = Scope::new("acme-workspace")?;
+# let _ = &scope;
 use lunaris::{EntityId, Graph, Keyword, Query, Vector};
 
 // Flip the pipeline ON. Default is OFF (blueprint §5.2).
@@ -289,7 +341,7 @@ let hits = lunaris
     .recall()
     .with_root(
         Vector::new("chunks", 30)
-            .and(Graph::anchored(vec![alice], 2))
+            .and(Graph::anchored(vec![(alice, 1.0)], 2))
             .fuse_rrf(60)
             .top(30),
     )
@@ -297,6 +349,7 @@ let hits = lunaris
     .top(5)
     .execute(Query::text("Tell me about Alice"))
     .await?;
+# Ok(()) }
 ```
 
 This mirrors the canonical compose example in the `recall()` doc comment (`crates/lunaris/src/recall.rs:62-72`).
@@ -322,7 +375,13 @@ Whenever a primitive must stop being visible to future queries. Three variants; 
 
 ### Code
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use lunaris::{EntityId, Graph, Keyword, Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+# let scope = Scope::new("acme-workspace")?;
+# let _ = &scope;
 use lunaris::{ForgetTarget, ScopeSpec};
 
 // Soft delete — MVCC: stamps bt.sys_to, prior reads via as_of still work.
@@ -346,22 +405,30 @@ let hard_receipt = lunaris
 assert!(!hard_receipt.preview);
 assert_eq!(hard_receipt.rows_written, 0);       // hard delete writes zero MVCC rows
 assert!(hard_receipt.rows_deleted >= 1);        // one KvDelete per match
+# Ok(()) }
 ```
 
 The three target shapes live at `crates/lunaris/src/forget.rs:49-71`:
 
-```rust
-pub enum ForgetTarget {
-    Id(Ulid),                  // OPS-01 — single-primitive purge
-    Scope(ScopeSpec),          // OPS-02 — prefix / metadata / episode-id predicate
-    Before(Hlc),               // OPS-03 — AS_OF cutoff
+```rust,no_run
+# use lunaris::{ForgetTarget, ScopeSpec};
+# fn demo(target: ForgetTarget) {
+// Both enums are `#[non_exhaustive]`, so the `_` arms are mandatory outside
+// the crate: this listing goes red when a variant is RENAMED or REMOVED, but
+// a newly ADDED variant slips past it silently.
+match target {
+    ForgetTarget::Id(_ulid)     => {} // OPS-01 — single-primitive purge
+    ForgetTarget::Scope(spec)   => match spec {
+        // OPS-02 — prefix / metadata / episode-id predicate
+        ScopeSpec::BySource(_prefix)      => {} // prefix match on episode.source
+        ScopeSpec::ByMetadata(_k, _v)     => {} // exact match on metadata[key]
+        ScopeSpec::ByEpisode(_ulid)       => {} // exact match on episode.id
+        _ => {}
+    },
+    ForgetTarget::Before(_hlc)  => {} // OPS-03 — AS_OF cutoff
+    _ => {}
 }
-
-pub enum ScopeSpec {
-    BySource(String),          // prefix match on episode.source
-    ByMetadata(String, String),// exact match on metadata[key]
-    ByEpisode(Ulid),           // exact match on episode.id
-}
+# }
 ```
 
 ### Gotchas
@@ -384,7 +451,13 @@ When your deployment has latency budget to spare AND you want provenance/quality
 
 ### Code
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use lunaris::{EntityId, Graph, Keyword, Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+# let scope = Scope::new("acme-workspace")?;
+# let _ = &scope;
 // Verifier — consumes __lunaris_verify__ messages emitted by the graph-ON
 // ingest path and publishes VerifyDecision outcomes.
 lunaris.verify_pipeline().enable();
@@ -406,6 +479,7 @@ for h in &hits {
         tracing::warn!("verifier backlog — results may be stale");
     }
 }
+# Ok(()) }
 ```
 
 Env seeds the initial state at open time:
@@ -536,7 +610,13 @@ Every one of the five swap builders returns `Self`, so they chain. Apply before 
 
 ### Code
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use lunaris::{EntityId, Graph, Keyword, Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+# let scope = Scope::new("acme-workspace")?;
+# let _ = &scope;
 use std::sync::Arc;
 
 use lunaris::{NoopConsolidator, NoopExtractor, NoopReranker, NoopVerifier};
@@ -554,17 +634,27 @@ let lunaris = lunaris::Lunaris::open("moon://localhost:6380")
     // Wire real slow-path backends before flipping .enable() on the pipeline.
     .with_verifier(Arc::new(NoopVerifier))
     .with_consolidator(Arc::new(NoopConsolidator));
+# Ok(()) }
 ```
 
 The escape hatch constructor bypasses URL routing entirely. `tests/ingest_smoke.rs:96` uses it to wire an in-memory storage + `StubEmbedder`:
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use lunaris::{EntityId, Graph, Keyword, Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+# let scope = Scope::new("acme-workspace")?;
+# let _ = &scope;
+# use lunaris::{Embedder, HlcClock, StoragePort};
+# fn my_recording_storage() -> Arc<dyn StoragePort> { unimplemented!() }
 use lunaris_core::StubEmbedder;
 
-let storage: Arc<dyn StoragePort> = Arc::new(my_recording_storage());
+let storage: Arc<dyn StoragePort> = my_recording_storage();
 let embedder: Arc<dyn Embedder>  = Arc::new(StubEmbedder::new(768));
 let clock                          = HlcClock::new(0);
 let handle                         = Lunaris::with_parts(storage, embedder, clock);
+# Ok(()) }
 ```
 
 If your storage also implements `KeywordPort`, use `Lunaris::with_parts_keyword` instead so recall's BM25 path stays alive (`crates/lunaris/src/handle.rs:269`).
@@ -593,7 +683,7 @@ v0.1.1 ships three layers. Pick the lowest one that meets your need — thinner 
 
 All three layers sit on the same `StoragePort`, so a future backend slots in at every layer without touching the recipe surface. The public recipe surface is codegen'd to PyO3 + napi-rs from a single annotated-Rust source (`lunaris-codegen` — see Section 1), so every Rust method below has a byte-stable `snake_case` Python counterpart and `camelCase` TypeScript counterpart.
 
-```
+```text
                     Lunaris::recall / ingest / forget
                                   ▲
            ┌──────────────────────┼──────────────────────┐
@@ -610,7 +700,13 @@ All three layers sit on the same `StoragePort`, so a future backend slots in at 
 
 The v0 Helios harness consumes Lunaris through this one recipe. In v0.1.1 the file was rewritten to hold a `WorkingMemory` internally and delegate every method — the public API is byte-stable versus v0.1.0 (the `coding_session_memory_public_surface_under_50_loc` test gates every commit).
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use lunaris::{EntityId, Graph, Keyword, Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+# let scope = Scope::new("acme-workspace")?;
+# let _ = &scope;
 use std::sync::Arc;
 
 use lunaris::{CodingSessionMemory, Hlc};
@@ -643,6 +739,7 @@ let receipt = pad.forget().await?;
 // as_of(ts) — borrowed time-travel view; re-runs read at the pinned HLC.
 let ts = Hlc { wall_ms: 1_700_000_000_000, counter: 0, node_id: 0 };
 let old_body = pad.as_of(ts).read("README.md").await?;
+# Ok(()) }
 ```
 
 Eight methods on `CodingSessionMemory` + one on `AsOfScratchpad`. Source: `crates/lunaris/src/recipes/coding_session_memory.rs` (≤ 50 LOC cap enforced by test).
@@ -659,7 +756,13 @@ All four live in `lunaris-recipes` (re-exports `WorkingMemory` from `lunaris::pr
 
 Recency-weighted message recall with ACT-R base-level activation (Anderson 1996, `d = 0.5`). Source: `crates/lunaris-recipes/src/message_stream.rs`.
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use lunaris::{EntityId, Graph, Keyword, Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+# let scope = Scope::new("acme-workspace")?;
+# let _ = &scope;
 use lunaris_recipes::MessageStream;
 use lunaris::Scope;
 
@@ -668,6 +771,7 @@ let scope = Scope::new("acme-prod")?;   // RFC 0001 partition key
 let chat = MessageStream::new(lunaris.clone(), scope.clone(), "chat:user_42/").with_top_k(10);
 chat.ingest("hello world", "thread-1", "user_42").await?;
 let hits = chat.recall("hello").await?;
+# Ok(()) }
 ```
 
 Public surface: `new`, `with_top_k`, `ingest(body, thread_id, participant_id)`, `recall(query)`. Scope prefix filters via `Filter::StartsWith` on `source`.
@@ -676,7 +780,13 @@ Public surface: `new`, `with_top_k`, `ingest(body, thread_id, participant_id)`, 
 
 RRF-fused Vector + Keyword RAG over a `source_prefix`-scoped document set. Source: `crates/lunaris-recipes/src/document_corpus.rs`.
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use lunaris::{EntityId, Graph, Keyword, Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+# let scope = Scope::new("acme-workspace")?;
+# let _ = &scope;
 use lunaris_recipes::DocumentCorpus;
 use lunaris::Scope;
 
@@ -693,6 +803,7 @@ let hits = kb
     .top(5)
     .search("brown fox")
     .await?;
+# Ok(()) }
 ```
 
 Public surface: `new`, `ingest(chunks)`, `filter(field, value)`, `top(k)`, `search(query)`. RRF-fuses Vector + Keyword on the `chunks` index; takes the Moon-native one-trip path when the handle is opened against `moon://…`.
@@ -703,7 +814,13 @@ Typestate-parameterised time-travel combinator. `S` is `Messages | Documents | F
 
 > **Backend note.** A *past* `as_of` hydrates through `StoragePort::read_as_of`, which needs a backend declaring `supports_historical_kv_reads() == true`. Moon does not, and is the only backend as of 0.7.0, so the call returns `StorageError::NotSupported` (HTTP `501 not_supported`): Moon stores Lunaris rows as plain hashes, so it refuses a historical pin rather than answering with present-time data. `before` / `after` / `between` filters over `valid`/`sys` on the *search* lane remain temporal (`FT.SEARCH AS_OF`).
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use lunaris::{EntityId, Graph, Keyword, Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+# let scope = Scope::new("acme-workspace")?;
+# let _ = &scope;
 use lunaris_core::hlc::Hlc;
 use lunaris_recipes::{Documents, TemporalQuery};
 use lunaris::Scope;
@@ -730,6 +847,7 @@ let old = TemporalQuery::<Documents>::new(lunaris.clone(), scope.clone())
     .before(t0)
     .execute("legacy config")
     .await?;
+# Ok(()) }
 ```
 
 Public surface: `new`, `as_of(ts)`, `before(ts)`, `after(ts)`, `between(lo, hi)`, `execute(query)`. `between` is lower-bound inclusive, upper-bound EXCLUSIVE — for "days X..=Y inclusive" pass `hi = Y + 1_day`.
@@ -738,7 +856,13 @@ Public surface: `new`, `as_of(ts)`, `before(ts)`, `after(ts)`, `between(lo, hi)`
 
 Scope-prefixed scratchpad with an explicit promotion hook. Source: `crates/lunaris/src/primitives/working_memory.rs`.
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use lunaris::{EntityId, Graph, Keyword, Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+# let scope = Scope::new("acme-workspace")?;
+# let _ = &scope;
 use lunaris::WorkingMemory;  // re-exported from lunaris-recipes too
 use lunaris::Scope;
 
@@ -753,6 +877,7 @@ let matches = wm.grep("memory").await?;
 // The Consolidator's default `consolidate_scoped` filters ConsolidateEvents
 // whose source does not start with "chat:user_42/".
 let report = wm.consolidate().await?;
+# Ok(()) }
 ```
 
 Public surface: `new`, `write(k, v)`, `read(k)`, `grep(pattern)`, `consolidate()`. The five-method cap is asserted at compile time.
@@ -763,7 +888,13 @@ All under `lunaris_recipes::conversational`. Each is a thin composition — ≤ 
 
 #### `ChatAgentMemory` — per-user chat history
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use lunaris::{EntityId, Graph, Keyword, Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+# let scope = Scope::new("acme-workspace")?;
+# let _ = &scope;
 use lunaris_recipes::conversational::ChatAgentMemory;
 use lunaris::Scope;
 
@@ -772,13 +903,20 @@ let scope = Scope::new("acme-prod")?;   // RFC 0001 partition key
 let chat = ChatAgentMemory::new(lunaris.clone(), scope.clone(), "user_42");  // scope "chat:user_42/"
 chat.remember("what's my name?").await?;
 let hits = chat.recall("my name").await?;
+# Ok(()) }
 ```
 
 Public surface: `new(lunaris, scope, user_id)`, `remember(turn)`, `recall(query)`. Holds both a `MessageStream` and a `WorkingMemory` scoped at `"chat:<user_id>/"` (the same prefix so `MultiTurnConversation` can consolidate without cross-user leaks).
 
 #### `MultiTurnConversation` — `ChatAgentMemory` + consolidation
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use lunaris::{EntityId, Graph, Keyword, Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+# let scope = Scope::new("acme-workspace")?;
+# let _ = &scope;
 use lunaris_recipes::conversational::MultiTurnConversation;
 use lunaris::Scope;
 
@@ -789,13 +927,20 @@ convo.remember("user", "hi").await?;    // (participant, body)
 convo.remember("bot", "hello").await?;
 let hits = convo.recall("greeting").await?;
 let report = convo.consolidate().await?;  // promote notes → Facts for this user only
+# Ok(()) }
 ```
 
 Public surface: `new`, `remember(participant, body)`, `recall(query)`, `consolidate()`. Scope isolation enforced at BOTH the write path (`MessageStream::ingest`) and the promotion filter (`WorkingMemory::consolidate`).
 
 #### `SlackArchive` — channel + user-filtered archive
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use lunaris::{EntityId, Graph, Keyword, Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+# let scope = Scope::new("acme-workspace")?;
+# let _ = &scope;
 use lunaris_recipes::conversational::SlackArchive;
 use lunaris::Scope;
 
@@ -808,7 +953,8 @@ slack.ingest_channel("C-general", "alice", "shipping today").await?;
 let hits = slack.channel("C-general").recall("shipping").await?;
 
 // Or use the query builder for combined filters.
-let hits = slack.channel("C-general").user("alice").recall("shipping").await?;
+let hits = slack.channel("C-general").with_user("alice").recall("shipping").await?;
+# Ok(()) }
 ```
 
 Public surface: `new`, `ingest_channel(channel, user, body)`, `recall(query)`, `channel(id)`, `user(id)`. `.channel(id)` returns a narrowed `SlackArchive` (scope `"slack:archive/channel=<id>/"`); `.user(id)` returns a `SlackArchiveQuery` helper with `.with_user(id)` + `.recall(query)`.
@@ -817,7 +963,13 @@ Public surface: `new`, `ingest_channel(channel, user, body)`, `recall(query)`, `
 
 #### `EmailThreading` — thread-scoped email archive
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use lunaris::{EntityId, Graph, Keyword, Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+# let scope = Scope::new("acme-workspace")?;
+# let _ = &scope;
 use lunaris_recipes::conversational::EmailThreading;
 use lunaris::Scope;
 
@@ -826,13 +978,20 @@ let scope = Scope::new("acme-prod")?;   // RFC 0001 partition key
 let mail = EmailThreading::new(lunaris.clone(), scope.clone()).with_graph_pipeline(true);
 mail.ingest("thread-1", "alice@x", "subject body").await?;
 let hits = mail.thread("thread-1").recall("subject").await?;
+# Ok(()) }
 ```
 
 Public surface: `new`, `ingest(root_id, from, body)`, `thread(root_id)`, `recall(query)`, `with_graph_pipeline(bool)`. `.thread(root_id)` returns a fresh `EmailThreading` at scope `"email:thread/<root_id>/"`. `.with_graph_pipeline(true)` calls `lunaris.graph_pipeline().enable()` (idempotent) so Entities/Relations extracted from email bodies light up graph traversal.
 
 #### `MeetingNotesMemory` — heading-scoped notes + attendees filter
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use lunaris::{EntityId, Graph, Keyword, Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+# let scope = Scope::new("acme-workspace")?;
+# let _ = &scope;
 use lunaris_recipes::conversational::MeetingNotesMemory;
 use lunaris::Scope;
 
@@ -847,6 +1006,7 @@ let hits = mtg
     .attendees(vec!["alice".into(), "bob".into()])
     .recall("staffing")
     .await?;
+# Ok(()) }
 ```
 
 Public surface: `new`, `note(heading, body)`, `recall(query)`, `attendees(list)`, `with_graph_pipeline(bool)`. `.attendees(list)` returns a `MeetingNotesQuery` that ANDs per-attendee `Filter::Eq` on `participant_id`. Default participant is `"scribe"` — for per-attendee authorship use `MessageStream::ingest` directly.
@@ -857,7 +1017,13 @@ All under `lunaris_recipes::documentary`. Each composes `DocumentCorpus` and/or 
 
 #### `DocumentKnowledgeBase` — filtered RAG over a source prefix
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use lunaris::{EntityId, Graph, Keyword, Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+# let scope = Scope::new("acme-workspace")?;
+# let _ = &scope;
 use lunaris_recipes::documentary::DocumentKnowledgeBase;
 use lunaris::Scope;
 
@@ -872,13 +1038,22 @@ let hits = kb
     .top(5)
     .search("onboarding")
     .await?;
+# Ok(()) }
 ```
 
 Public surface: `new`, `ingest(chunks)`, `filter(field, value)`, `top(k)`, `search(query)`. One-to-one passthrough of `DocumentCorpus`; no business logic.
 
 #### `ResearchPaperCorpus` — `DocumentCorpus` + opt-in citation graph
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use lunaris::{EntityId, Graph, Keyword, Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+# let scope = Scope::new("acme-workspace")?;
+# let _ = &scope;
+# let chunks: Vec<(String, serde_json::Map<String, serde_json::Value>)> =
+#     vec![("a paper chunk".into(), serde_json::Map::new())];
 use lunaris_recipes::documentary::ResearchPaperCorpus;
 use lunaris::Scope;
 
@@ -888,13 +1063,20 @@ let papers = ResearchPaperCorpus::new(lunaris.clone(), scope.clone(), "papers:")
     .with_graph_pipeline(true);        // opt-in citation graph
 papers.ingest(chunks).await?;
 let hits = papers.search("attention is all you need").await?;
+# Ok(()) }
 ```
 
 Public surface: `new`, `with_graph_pipeline(bool)`, `ingest(chunks)`, `search(query)`. Graph opt-in is per-handle and idempotent; default OFF per blueprint §5.2.
 
 #### `CodeRepoMemory` — function body "as-of commit N"
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use lunaris::{EntityId, Graph, Keyword, Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+# let scope = Scope::new("acme-workspace")?;
+# let _ = &scope;
 use lunaris_core::hlc::Hlc;
 use lunaris_recipes::documentary::CodeRepoMemory;
 use lunaris::Scope;
@@ -912,13 +1094,23 @@ repo.ingest_commit(
 // Time-travel to a specific commit — Hlc carried directly for counter/node_id control.
 let ts = Hlc { wall_ms: 1_713_700_000_000, counter: 0, node_id: 0 };
 let hits = repo.recall("recall", ts).await?;
+# Ok(()) }
 ```
 
 Public surface: `new`, `ingest_commit(commit_sha, committer_date_unix_ms, chunks)`, `recall(query, as_of)`. `committer_date_unix_ms` is `i64`; precision below nanos has nowhere to live on `Hlc`. Isolation across repos is the caller's responsibility — `TemporalQuery` recalls across all Documents, so use a unique `repo_prefix` per repo.
 
 #### `TimelineReconstruction` — "what happened on day X"
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use lunaris::{EntityId, Graph, Keyword, Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+# let scope = Scope::new("acme-workspace")?;
+# let _ = &scope;
+# let chunks: Vec<(String, serde_json::Map<String, serde_json::Value>)> =
+#     vec![("an event".into(), serde_json::Map::new())];
+# let day_0_ms: u64 = 1_736_467_200_000;
 use lunaris_core::hlc::Hlc;
 use lunaris_recipes::documentary::TimelineReconstruction;
 use lunaris::Scope;
@@ -933,13 +1125,20 @@ let end   = Hlc { wall_ms: day_0_ms + 86_400_000, counter: 0, node_id: 0 };
 // between(lo, hi) — EXCLUSIVE upper bound: pass hi = last_day + 1_day for inclusive.
 let day_hits = timeline.between("incident", start, end).await?;
 let at_hits  = timeline.as_of("incident", start).await?;
+# Ok(()) }
 ```
 
 Public surface: `new`, `ingest(chunks)`, `between(query, lo, hi)`, `as_of(query, ts)`. Deliberately thin (< 10 LOC acceptable) — value is named discoverability.
 
 #### `CustomerSupportHistory` — tickets + chats, RRF within each
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use lunaris::{EntityId, Graph, Keyword, Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+# let scope = Scope::new("acme-workspace")?;
+# let _ = &scope;
 use lunaris_recipes::documentary::CustomerSupportHistory;
 use lunaris::Scope;
 
@@ -947,12 +1146,13 @@ let scope = Scope::new("acme-prod")?;   // RFC 0001 partition key
 
 let hist = CustomerSupportHistory::new(lunaris.clone(), scope.clone())
     .with_graph_pipeline(true);       // opt-in product-customer relations
-hist.ingest_ticket("T-101", chunks).await?;
-hist.ingest_chat("T-101", "customer", "app crashes on start").await?;
+hist.ingest_ticket("T-101", "login fails after the 2.3 upgrade").await?;
+hist.ingest_chat("T-101", 0, "customer", "app crashes on start").await?;
 let hits = hist.recall("crash").await?;     // concat: tickets first, chats second
+# Ok(()) }
 ```
 
-Public surface: `new`, `with_graph_pipeline(bool)`, `ingest_ticket(id, chunks)`, `ingest_chat(ticket_id, from, body)`, `recall(query)`. Critical contract: RRF fuses **within** each primitive's bucket, not across types. The wrapper asserts the two source prefixes are distinct (`ticket:` vs `chat:`) so double-indexed records can't collapse duplicates.
+Public surface: `new`, `with_graph_pipeline(bool)`, `ingest_ticket(id, body)`, `ingest_chat(ticket_id, turn_idx, from, body)`, `recall(query)`. Critical contract: RRF fuses **within** each primitive's bucket, not across types. The wrapper asserts the two source prefixes are distinct (`ticket:` vs `chat:`) so double-indexed records can't collapse duplicates.
 
 ### Gotchas
 
@@ -981,9 +1181,17 @@ stages it automatically on first recall.
 
 Or (air-gap escape hatch, requires `--features embed-remote`):
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use lunaris::{EntityId, Graph, Keyword, Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+# let scope = Scope::new("acme-workspace")?;
+# let _ = &scope;
+# let url = "moon://localhost:6380";
 let lunaris = lunaris::Lunaris::open(url).await?
     .with_embedder(Arc::new(lunaris_embed_remote::OllamaEmbedder::new(Default::default())?));
+# Ok(()) }
 ```
 
 ### Reranker GGUF missing → `NoopReranker`
@@ -999,12 +1207,19 @@ Your URL scheme isn't `moon` (`crates/lunaris/src/open.rs`). Check for typos (`r
 
 The most common cause is an over-tight `filter_str`. Drop the filter:
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use lunaris::{EntityId, Graph, Keyword, Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+# let scope = Scope::new("acme-workspace")?;
+# let _ = &scope;
 let hits = lunaris.recall()
     .with_root(Vector::new("chunks", 30).top(5))
     // .filter_str("source LIKE 'helios:fs/wrong/%'").unwrap()  // remove this
     .execute(Query::text("..."))
     .await?;
+# Ok(()) }
 ```
 
 The second-most-common cause is asking for an index that wasn't written — the chunker fills `chunks`, the extractor fills `entities` and `facts`, and RAPTOR fills `communities` with embedded summary nodes at ingest — queryable via the `Tree` operator (the consolidator's Leiden run also contributes community nodes).
@@ -1034,10 +1249,19 @@ Every symbol the guide names is re-exported at the `lunaris::` top level from `c
 
 You called `.hard()` without attaching a `ForgetConfirmation`. Two-step flow:
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use lunaris::{EntityId, Graph, Keyword, Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
+# let scope = Scope::new("acme-workspace")?;
+# let _ = &scope;
+# use lunaris::{ForgetTarget, ScopeSpec};
+# let target = ForgetTarget::Scope(ScopeSpec::BySource("helios:fs/session-42/".into()));
 let preview = lunaris.forget(target.clone().dry_run()).await?;
 let token   = lunaris.confirm_hard_forget(preview).await?;
 let _       = lunaris.forget(target.hard().with_token(token)).await?;
+# Ok(()) }
 ```
 
 ### I want a test without downloading any model

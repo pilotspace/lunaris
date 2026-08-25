@@ -44,7 +44,7 @@ Every other operation (graph recall, dry-run forget, hard-delete confirmation, v
 
 ### Process / session topology
 
-```
+```text
   Helios process (one per node)
   +--------------------------------------------+
   |  Arc<Lunaris>  (one per process)           |
@@ -89,15 +89,14 @@ A single agent session runs end-to-end inside one process: open Lunaris, create 
 
 ### Code
 
-```rust
+```rust,no_run
 use std::sync::Arc;
 use lunaris::{CodingSessionMemory, Lunaris};
-    use lunaris::Scope;
-
-    let scope = Scope::new("helios-prod")?;   // RFC 0001 partition key
+use lunaris::Scope;
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
+    let scope = Scope::new("helios-prod")?;   // RFC 0001 partition key
     // One handle per process — share it via Arc. `Lunaris::open` picks the
     // backend by URL scheme (`crates/lunaris/src/handle.rs:148-206`).
     let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
@@ -233,13 +232,12 @@ This is a paraphrase of `helios_chat_10k_turns_dual_backend` at `crates/lunaris/
 use std::sync::Arc;
 use std::time::Instant;
 use lunaris::{CodingSessionMemory, Lunaris};
-    use lunaris::Scope;
-
-    let scope = Scope::new("helios-prod")?;   // RFC 0001 partition key
+use lunaris::Scope;
 
 async fn run_chat_session(url: &str, turns: usize)
     -> Result<(f64, f64), lunaris::LunarisError>
 {
+    let scope = Scope::new("helios-prod")?;   // RFC 0001 partition key
     let lunaris = Arc::new(Lunaris::open(url).await?);
     let session_id = format!("smoke-chat-{}", ulid::Ulid::new());
     let pad = CodingSessionMemory::new(lunaris.clone(), scope.clone(), &session_id);
@@ -322,13 +320,12 @@ This paraphrases `helios_doc_rag_50k_md_dual_backend` at `crates/lunaris/tests/c
 ```rust
 use std::sync::Arc;
 use lunaris::{CodingSessionMemory, Lunaris};
-    use lunaris::Scope;
-
-    let scope = Scope::new("helios-prod")?;   // RFC 0001 partition key
+use lunaris::Scope;
 
 async fn build_and_query(url: &str, docs: u64)
     -> Result<(), lunaris::LunarisError>
 {
+    let scope = Scope::new("helios-prod")?;   // RFC 0001 partition key
     let lunaris = Arc::new(Lunaris::open(url).await?);
     let session_id = format!("smoke-rag-{}", ulid::Ulid::new());
     let pad = CodingSessionMemory::new(lunaris.clone(), scope.clone(), &session_id);
@@ -372,12 +369,16 @@ async fn build_and_query(url: &str, docs: u64)
 - **`build_md_doc_corpus` writes under `bench:md-doc/<idx>`, not `helios:fs/<sid>/<path>`.** This is documented at `crates/lunaris-bench/src/corpus.rs:772-775`: *"Synthetic episodes use `source = "bench:md-doc/<idx>"` so they don't collide with `helios:fs/...` Helios-namespaced data when both run on the same backend."* The pad's `grep` is scoped via `Filter::StartsWith { field: "source", prefix: "helios:fs/<sid>/" }` (`coding_session_memory.rs:151-156`), so the grep loop above will return zero hits. Two valid workarounds:
   1. **Ingest via `pad.write` under the session prefix.** Each markdown body becomes one `Episode { source: "helios:fs/<sid>/<path>", ... }` and the pad's `grep` finds it. Slower at ingest (no 64-wide batching) but data stays inside the pad abstraction.
   2. **Drop to `lunaris.recall()` with a wider filter.** Bypass the pad for retrieval:
-     ```rust
+     ```rust,no_run
+     # use lunaris::Lunaris;
+     # async fn demo(lunaris: &Lunaris) -> Result<(), lunaris::LunarisError> {
      let hits = lunaris.recall()
          .filter_str("source LIKE 'bench:md-doc/%'").unwrap()
          .top(5)
          .execute(lunaris_retrieve::Query::text("Section 0 Lorem"))
          .await?;
+     # let _ = hits;
+     # Ok(()) }
      ```
      This is what the smoke test does implicitly via `pad.grep(...)` — the zero-hit result does not cause it to fail because the budget check is a *latency* check, not a *correctness* one. See `check_budget` at `coding_session_memory_smoke.rs:206-219`.
 - **`LUNARIS_HELIOS_SMOKE_DOCS=50000` unlocks the full target.** Default `docs = 1_000` for dev-box runs (`coding_session_memory_smoke.rs:123-126`). The 50K document pass takes ~5 minutes on a warm Moon.
@@ -400,15 +401,14 @@ An agent made a wrong decision at turn 847. The user wants to see what the agent
 
 ### Code
 
-```rust
+```rust,no_run
 use std::sync::Arc;
 use lunaris::{CodingSessionMemory, Hlc, Lunaris};
-    use lunaris::Scope;
-
-    let scope = Scope::new("helios-prod")?;   // RFC 0001 partition key
+use lunaris::Scope;
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
+    let scope = Scope::new("helios-prod")?;   // RFC 0001 partition key
     let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
     let pad = CodingSessionMemory::new(lunaris.clone(), scope.clone(), "session-42");
 
@@ -467,14 +467,14 @@ A user closes their account and legal requires every trace of their data gone wi
 
 ### Code
 
-```rust
+```rust,no_run
 use std::sync::Arc;
 use lunaris::{ForgetTarget, CodingSessionMemory, Lunaris, ScopeSpec};
-
-    let scope = Scope::new("helios-prod")?;   // RFC 0001 partition key
+use lunaris::Scope;
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
+    let scope = Scope::new("helios-prod")?;   // RFC 0001 partition key
     let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
     let pad = CodingSessionMemory::new(lunaris.clone(), scope.clone(), "session-42");
 
@@ -523,13 +523,17 @@ async fn main() -> Result<(), lunaris::LunarisError> {
 
 - **Soft vs hard is about MVCC vs `KvDelete`, not about audit.** Every successful `forget` call publishes exactly one `AuditEvent::Forget(receipt)` to the `__lunaris_audit__` topic (`crates/lunaris/src/forget.rs:254-255, 289-290`). Soft and hard leave identical audit rows — the difference is whether the underlying KV bytes are still present or gone.
 - **Hard-delete without a token fails *loudly*.** `LunarisError::Validate(ValidateError::ConfirmationRequired(_))` (`forget.rs:233-237`) is the typed variant, NOT an `anyhow::Error`. Match on it explicitly if your calling code needs to distinguish "missing confirmation" from "genuine backend failure":
-  ```rust
+  ```rust,no_run
+  # use lunaris::{ForgetTarget, Lunaris, ScopeSpec};
+  # async fn demo(lunaris: &Lunaris, target: ForgetTarget)
+  #     -> Result<(), lunaris::LunarisError> {
   match lunaris.forget(target.clone().hard()).await {
       Err(lunaris::LunarisError::Validate(
           lunaris::ValidateError::ConfirmationRequired(msg),
       )) => eprintln!("need dry_run first: {msg}"),
       other => { other?; }
   }
+  # Ok(()) }
   ```
 - **The recipe surface is soft-only.** `CodingSessionMemory::forget()` always lowers to `ForgetTarget::Scope(ScopeSpec::BySource(session_prefix))` with default options (`coding_session_memory.rs:206-210`). There is no `pad.hard_forget()` — you must drop to the `Lunaris` handle as above. This is intentional: a `pad.` method that could irreversibly delete data would be a footgun in agent code-gen paths.
 - **`ScopeSpec::BySource` is a prefix match on the JSON `source` field.** It is NOT regex, glob, or substring (`crates/lunaris/src/forget.rs:417-421`). Passing `"helios:fs/session-42"` without the trailing `/` would also match `helios:fs/session-42-extra/` — always include the terminator.
@@ -554,15 +558,14 @@ The agent asks *"tell me everything you know about Alice"*. Pure vector recall r
 
 The CodingSessionMemory public surface is intentionally narrow (`coding_session_memory.rs:17-32`) — 9 public symbols, zero graph ops. Graph-aware recall drops to the `Lunaris` handle directly.
 
-```rust
+```rust,no_run
 use std::sync::Arc;
 use lunaris::{EntityId, Graph, CodingSessionMemory, Lunaris, Query, Vector};
-    use lunaris::Scope;
-
-    let scope = Scope::new("helios-prod")?;   // RFC 0001 partition key
+use lunaris::Scope;
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
+    let scope = Scope::new("helios-prod")?;   // RFC 0001 partition key
     let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
 
     // (1) Turn the graph pipeline on BEFORE ingest. Default is OFF per
@@ -590,7 +593,7 @@ async fn main() -> Result<(), lunaris::LunarisError> {
         .recall()
         .with_root(
             Vector::new("chunks", 30)
-                .and(Graph::anchored(vec![alice], 2))
+                .and(Graph::anchored(vec![(alice, 1.0)], 2))
                 .fuse_rrf(60)
                 .rerank(lunaris.reranker())
                 .top(5),
@@ -635,16 +638,15 @@ The verifier queue (`__lunaris_verify__`) has backed up under ingest pressure �
 
 ### Code
 
-```rust
+```rust,no_run
 use std::sync::Arc;
 use lunaris::{CodingSessionMemory, Lunaris};
 use lunaris_retrieve::Hit;
-    use lunaris::Scope;
-
-    let scope = Scope::new("helios-prod")?;   // RFC 0001 partition key
+use lunaris::Scope;
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
+    let scope = Scope::new("helios-prod")?;   // RFC 0001 partition key
     let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
     let pad = CodingSessionMemory::new(lunaris.clone(), scope.clone(), "session-42");
 
@@ -702,14 +704,12 @@ decide up front whether the store is there, and say so.
 
 Paraphrase of the probe in `crates/lunaris/tests/coding_session_memory_smoke.rs`.
 
-```rust
+```rust,no_run
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 use std::time::Duration;
 use lunaris::{CodingSessionMemory, Lunaris};
-    use lunaris::Scope;
-
-    let scope = Scope::new("helios-prod")?;   // RFC 0001 partition key
+use lunaris::Scope;
 
 /// TCP probe with 1s timeout. Mirror of `probe_backend` at
 /// coding_session_memory_smoke.rs:171-190. Accepts hostnames and literal IPs
@@ -742,6 +742,7 @@ async fn main() -> Result<(), lunaris::LunarisError> {
     };
     eprintln!("=== store: {url} ===");
 
+    let scope = Scope::new("helios-prod")?;   // RFC 0001 partition key
     let lunaris = Arc::new(Lunaris::open(&url).await?);
     let pad = CodingSessionMemory::new(lunaris.clone(), scope.clone(), "probe-demo");
 
