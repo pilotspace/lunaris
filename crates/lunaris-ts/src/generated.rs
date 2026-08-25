@@ -55,6 +55,13 @@ impl Lunaris {
         serde_json::to_value(&out).map_err(napi_err)
     }
 
+    /// Which embedder backend this process resolved: "llamacpp", "openai-remote", "ollama-remote", "noop", or "unresolved". A "noop" backend produces zero vectors, so recall silently degrades to keyword-only while still returning results.
+    #[napi]
+    pub fn embedder_backend(&self) -> napi::Result<String> {
+        let out = self.inner.embedder_backend();
+        Ok(out)
+    }
+
     /// Returns the current monotonic LSN — a cheap consistent snapshot marker. Implemented as no-op atomic_write(&[]).
     #[napi]
     pub async fn snapshot(&self) -> napi::Result<String> {

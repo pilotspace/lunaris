@@ -191,6 +191,8 @@ export declare class Lunaris {
   recall(): RetrievalBuilder
   /** Single-entry-point erasure API (OPS-01/02/03/04). Soft-delete default; hard mode requires a confirmation token. */
   forget(req: any): Promise<any>
+  /** Which embedder backend this process resolved: "llamacpp", "openai-remote", "ollama-remote", "noop", or "unresolved". A "noop" backend produces zero vectors, so recall silently degrades to keyword-only while still returning results. */
+  embedderBackend(): string
   /** Returns the current monotonic LSN — a cheap consistent snapshot marker. Implemented as no-op atomic_write(&[]). */
   snapshot(): Promise<string>
 }

@@ -253,3 +253,85 @@ fn emit_is_deterministic() {
     let ts2 = emit_ts(&ir);
     assert_eq!(ts1, ts2, "emit_ts is non-deterministic");
 }
+
+/// Neither emitter may emit a Rust-debug placeholder for a type it does not
+/// handle.
+///
+/// `py_sync_return_ty` ended in `other => format!("<{other:?}>")`. For every
+/// return kind the emitter had a real arm for, that line was dead; the first
+/// method to return a plain scalar from a sync `&self` method — W0.7's
+/// `Lunaris::embedder_backend`, returning `String` — turned it into
+/// `PyResult<<Str>>`, which is not Rust. The TypeScript side had the mirror
+/// defect: it declared `napi::Result<String>` and then returned
+/// `serde_json::to_value(&out)`, a `Value`.
+///
+/// A generator that emits code it cannot type is worse than one that refuses,
+/// because the output LOOKS deliberate — `<Str>` reads like a generic. Nothing
+/// catches it until somebody builds an SDK, and the SDK crates are excluded
+/// from `cargo test --workspace` (cdylib link errors), so "somebody" is CI at
+/// the earliest.
+///
+/// Keyed on the debug-format signature `<Ident>` rather than on the word
+/// `Str`, so the next unhandled kind trips it too.
+#[test]
+fn no_emitter_writes_a_debug_format_placeholder() {
+    let ir = extract_surface(&workspace_root()).expect("extract_surface");
+    for (lang, src) in [("py", emit_py(&ir)), ("ts", emit_ts(&ir).rust_glue)] {
+        for (n, line) in src.lines().enumerate() {
+            // `format!("<{other:?}>")` lands inside an existing generic, so
+            // the placeholder always shows up as `<<Ident>>`. Nothing this
+            // emitter legitimately writes contains `<<` — there are no shift
+            // operators in generated binding glue.
+            let Some(i) = line.find("<<") else { continue };
+            let rest = &line[i + 2..];
+            let ident: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric()).collect();
+            if !ident.is_empty()
+                && ident.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+                && rest[ident.len()..].starts_with(">>")
+            {
+                panic!(
+                    "{lang} emitter wrote a debug-format placeholder `<{ident}>` at line {}:\n  \
+                     {line}\nAn emitter arm is missing for this return kind. Add the arm — do \
+                     not let a fallback emit code that cannot compile.",
+                    n + 1
+                );
+            }
+        }
+    }
+}
+
+/// A sync `&self` method returning a plain `String` must emit a real
+/// signature and a real body in both languages.
+///
+/// This is the concrete case the guard above generalises. Pinned separately
+/// so a regression names the method rather than a line number.
+#[test]
+fn a_sync_string_returning_method_emits_compilable_bindings() {
+    let ir = extract_surface(&workspace_root()).expect("extract_surface");
+
+    let py = emit_py(&ir);
+    assert!(
+        py.contains("fn embedder_backend(&self) -> PyResult<String>"),
+        "python binding for embedder_backend has the wrong signature:\n{}",
+        py.lines().filter(|l| l.contains("embedder_backend")).collect::<Vec<_>>().join("\n")
+    );
+
+    let ts = emit_ts(&ir).rust_glue;
+    assert!(
+        ts.contains("pub fn embedder_backend(&self) -> napi::Result<String>"),
+        "ts binding for embedder_backend has the wrong signature:\n{}",
+        ts.lines().filter(|l| l.contains("embedder_backend")).collect::<Vec<_>>().join("\n")
+    );
+    // The TS body must NOT round-trip a String through serde_json — that
+    // yields a `Value` and does not typecheck against `Result<String>`.
+    let ts_body: String = ts
+        .lines()
+        .skip_while(|l| !l.contains("fn embedder_backend"))
+        .take(4)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !ts_body.contains("serde_json::to_value"),
+        "ts binding serialises a String through serde_json, which returns Value:\n{ts_body}"
+    );
+}
