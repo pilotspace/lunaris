@@ -140,7 +140,7 @@ impl CodingSessionMemory {
                 // payload. `read_at` concatenates every hit under the exact
                 // session-scoped source.
                 let source = format!("{}{}", self.session_prefix, path);
-                read_at(&self.lunaris, &source, path, None).await
+                read_at(&self.lunaris, &self.scope, &source, path, None).await
             }
         }
     }
@@ -262,7 +262,7 @@ impl AsOfScratchpad<'_> {
     /// retrieval `as_of` with this view's fixed timestamp.
     pub async fn read(&self, path: &str) -> Result<Option<String>, LunarisError> {
         let source = format!("{}{}", self.inner.session_prefix, path);
-        read_at(&self.inner.lunaris, &source, path, Some(self.ts)).await
+        read_at(&self.inner.lunaris, &self.inner.scope, &source, path, Some(self.ts)).await
     }
 }
 
@@ -276,14 +276,27 @@ impl AsOfScratchpad<'_> {
 /// fragment — T-12-01-01), and concatenates `Hit::text` into a single body.
 async fn read_at(
     lunaris: &Arc<Lunaris>,
+    scope: &Scope,
     source: &str,
     query_text: &str,
     as_of: Option<Hlc>,
 ) -> Result<Option<String>, LunarisError> {
-    let filter = Filter::StartsWith { field: "source".into(), prefix: source.to_string() };
+    // F41 — `Filter::Eq`, not `Filter::StartsWith`. The prefix of a path is
+    // not the path: `read("notes")` matched `notes-old` as well and the loop
+    // below concatenated both. `Eq` is also what this function's own contract
+    // has always claimed, and unlike `StartsWith` it renders as a real Moon
+    // KNN prefilter (`@source:{v}`) rather than being post-hydrate filtered,
+    // so the exact read stops carrying a fanout that grows with the session.
+    let filter = Filter::Eq { field: "source".into(), value: source.into() };
+    // F41 — `.with_scope(scope)` is load-bearing. `recall_with_degraded_check`
+    // hangs off the BARE handle, whose builder defaults to `Scope::dev()`,
+    // while every write goes to the pad's own scope. Without this the
+    // time-travel read searched a partition the caller never wrote to and
+    // answered `None` for data that was definitely there.
     let mut builder = lunaris
         .recall_with_degraded_check()
         .await?
+        .with_scope(scope.clone())
         .filter(filter)
         .top(READ_TOP)
         .with_initial_degraded(false);
