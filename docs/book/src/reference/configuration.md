@@ -182,6 +182,7 @@ the 25 ms p50 recall contract.
 | `LUNARIS_EMBEDDER_OPENAI_URL` | — | **Selector** for the OpenAI-compatible remote embedder (`lunaris-embed-remote::OpenAiEmbedder`, also `--features embed-remote`): setting it routes embedding to that `/v1/embeddings` endpoint, checked **ahead of** the Ollama hatch (`lunaris/src/handle.rs`). Empty = off. |
 | `LUNARIS_EMBEDDER_OPENAI_MODEL` | `text-embedding-3-small` | Model id sent in the OpenAI-compatible `/v1/embeddings` request (`lunaris-embed-remote/src/openai.rs`) |
 | `LUNARIS_EMBEDDER_OPENAI_API_KEY` | — | Optional bearer token for that endpoint; empty/whitespace → no `Authorization` header (keyless llama-server/vLLM allowed). Redacted in `Debug` output. |
+| `LUNARIS_SUPPRESS_DEGRADED_WARNING` | — | Silences the one-time stderr line `Lunaris::open` prints when the embedder resolved to `noop` — every vector is zeros, so semantic recall degrades to keyword-only while every call keeps succeeding. Only `1`/`true`/`yes`/`on` suppress; `0`, `false` and an empty value do not. Nothing is printed when a `tracing` subscriber is installed, because that host already receives the `WARN`. Query the backend directly with `embedder_backend()`. |
 | `LUNARIS_EMBED_MAX_BATCH_TOKENS` | `4096` | llama.cpp batch-token window for the in-process embedder (`lunaris/src/handle.rs`); values < 16 rejected → default |
 | `LUNARIS_CONTEXT_EMBED_MAX_BATCH_TOKENS` | `1024` | Same knob for the interactive/contextd embedder — smaller default (~1.1 GB compute buffer vs ~2.5 GB at 4096); values < 16 rejected → default |
 

@@ -366,6 +366,13 @@ impl Lunaris {
     ///   or `LUNARIS_EMBEDDER_OLLAMA_URL` to skip local inference entirely.
     pub async fn open(url: &str) -> Result<Self, LunarisError> {
         let embedder = resolve_embedder(embed_max_batch_tokens()).await?;
+        // W0.7 successor: `resolve_embedder` has now recorded the backend, so a
+        // degraded one announces itself here rather than waiting to be asked.
+        // This is deliberately on `open` and NOT on `open_with_embedder`: the
+        // latter is the injection seam, where the caller supplied the embedder
+        // and already knows what it is. Both SDK entry points route through
+        // `open`, so neither needs its own copy.
+        announce_degradation_once();
         Self::open_with_embedder(url, embedder).await
     }
 
@@ -2070,6 +2077,90 @@ impl std::fmt::Display for EmbedderBackend {
 }
 
 static RESOLVED_EMBEDDER_BACKEND: OnceLock<EmbedderBackend> = OnceLock::new();
+static DEGRADATION_ANNOUNCED: OnceLock<()> = OnceLock::new();
+
+/// Environment override that silences [`announce_degradation_once`].
+pub const SUPPRESS_DEGRADED_WARNING_ENV: &str = "LUNARIS_SUPPRESS_DEGRADED_WARNING";
+
+/// What [`Lunaris::open`] should do about the backend it just resolved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DegradationNotice {
+    /// Say nothing — healthy, unknown, suppressed, or already covered by a
+    /// subscriber that will receive the `tracing::warn!`.
+    Silent,
+    /// Write this to stderr, once per process.
+    Emit(String),
+}
+
+/// Decide whether a resolved backend should announce itself on stderr.
+///
+/// W0.7 successor. `embedder_backend()` made degradation *queryable*, which
+/// still requires the caller to know to ask. The `tracing::warn!` on the Noop
+/// path is real but reaches nobody in an SDK process: neither `lunaris-py` nor
+/// `lunaris-ts` installs a subscriber, so for a `pip install lunaris` user it is
+/// emitted into a void — and that is precisely the population whose symptom is
+/// "recall returns nothing and every call succeeded".
+///
+/// Split out as a pure function on purpose. The alternative — reading the env
+/// and the dispatcher inside `open` — is untestable without `env::set_var`,
+/// which edition 2024 makes `unsafe` and which races every sibling test in the
+/// same binary through code that never names the variable.
+///
+/// `subscriber_installed` should come from `tracing::dispatcher::has_been_set()`:
+/// a host that set one up already gets the `warn!` through its own routing, and
+/// printing to stderr as well would both double-report and bypass that routing.
+#[must_use]
+pub fn degradation_notice(
+    backend: EmbedderBackend,
+    subscriber_installed: bool,
+    suppress_env: Option<&str>,
+) -> DegradationNotice {
+    // `Unresolved` is "open never ran here", not "degraded" — see
+    // `produces_real_vectors`, which returns true for it for the same reason.
+    if backend.produces_real_vectors() || subscriber_installed {
+        return DegradationNotice::Silent;
+    }
+    // Key on the ACCEPTED SET, never on presence: an `is_some()` check would let
+    // `LUNARIS_SUPPRESS_DEGRADED_WARNING=0` — and the empty string a shell
+    // produces for an exported-but-unset var — silence the one warning the user
+    // most needs.
+    if let Some(raw) = suppress_env {
+        let v = raw.trim().to_ascii_lowercase();
+        if matches!(v.as_str(), "1" | "true" | "yes" | "on") {
+            return DegradationNotice::Silent;
+        }
+    }
+    DegradationNotice::Emit(format!(
+        "lunaris: WARNING — embedder backend is '{backend}': every vector is zeros, \
+so semantic recall silently degrades to keyword-only while every call keeps \
+succeeding. Stage a GGUF (LUNARIS_EMBEDDER_GGUF, or ~/.lunaris/models/) or \
+configure a remote embedder (LUNARIS_EMBEDDER_OPENAI_URL / \
+LUNARIS_EMBEDDER_OLLAMA_URL). Query it with embedder_backend(); silence this \
+with {SUPPRESS_DEGRADED_WARNING_ENV}=1."
+    ))
+}
+
+/// Apply [`degradation_notice`] for the process-resolved backend, at most once.
+///
+/// Called at the end of [`Lunaris::open`] — the single seam both SDKs route
+/// through, so neither needs its own copy and `generated.rs` stays untouched.
+fn announce_degradation_once() {
+    if DEGRADATION_ANNOUNCED.get().is_some() {
+        return;
+    }
+    let notice = degradation_notice(
+        resolved_embedder_backend(),
+        tracing::dispatcher::has_been_set(),
+        std::env::var(SUPPRESS_DEGRADED_WARNING_ENV).ok().as_deref(),
+    );
+    if let DegradationNotice::Emit(msg) = notice {
+        // Once per process: the resolution itself is process-global, so warning
+        // twice would imply two independent decisions were made.
+        if DEGRADATION_ANNOUNCED.set(()).is_ok() {
+            eprintln!("{msg}");
+        }
+    }
+}
 
 /// The embedder backend [`Lunaris::open`] resolved, or
 /// [`EmbedderBackend::Unresolved`] if `open` has not run in this process.

@@ -82,7 +82,8 @@ pub use episode_builder::EpisodeBuilder;
 pub use forget::{ForgetConfirmation, ForgetReceipt, ForgetTarget, IndexKind, ScopeSpec};
 pub use graph_pipeline::{ENABLED_ENV_VAR as GRAPH_ENABLED_ENV_VAR, GraphPipelineHandle};
 pub use handle::{
-    EmbedderBackend, IngestKind, Lunaris, ScopedLunaris, VerifyAgendaEntry, lazy_default_embedder,
+    DegradationNotice, EmbedderBackend, IngestKind, Lunaris, SUPPRESS_DEGRADED_WARNING_ENV,
+    ScopedLunaris, VerifyAgendaEntry, degradation_notice, lazy_default_embedder,
     resolve_default_embedder, resolve_default_reranker, resolved_embedder_backend,
 };
 pub use recall_rerank::{RECALL_RERANK_ENV_VAR, RECALL_RERANK_TOP_IN_ENV_VAR, RecallRerankConfig};
