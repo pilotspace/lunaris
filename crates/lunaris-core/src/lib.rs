@@ -35,7 +35,9 @@ pub mod store_discovery;
 
 pub use bitemporal::BiTemporal;
 pub use circuit_breaker::{CircuitBreaker, CircuitConfig, CircuitState};
-pub use embedder::{Embedder, FailingEmbedder, NOOP_DEFAULT_DIM, NoopEmbedder, StubEmbedder};
+pub use embedder::{
+    Embedder, FailingEmbedder, NOOP_DEFAULT_DIM, NoopEmbedder, StubEmbedder, det_vec,
+};
 pub use error::{
     ConsolError, ExtractError, LunarisError, RetrieveError, StorageError, Subsystem, ValidateError,
 };

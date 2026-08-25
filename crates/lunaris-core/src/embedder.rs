@@ -144,18 +144,123 @@ impl Embedder for NoopEmbedder {
     }
 }
 
-fn det_vec(s: &str, dim: usize) -> Vec<f32> {
-    // Deterministic: seed a tiny LCG by hashing the input; emit `dim` floats in [-1, 1].
+/// Number of clusters [`det_vec`] draws from. At the 1M-vector corpus the
+/// benchmarks build this averages ~4k vectors per cluster — dense enough that
+/// a nearest-neighbour query has an unambiguous answer.
+const DET_VEC_CLUSTERS: u64 = 256;
+
+/// How far a vector strays from its cluster centroid, before normalisation.
+const DET_VEC_JITTER: f32 = 0.15;
+
+#[inline]
+fn lcg(state: &mut u64) -> f32 {
+    *state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+    // `>> 32`, not `>> 33`. The original shifted 33 bits, leaving 31 bits of
+    // entropy in a value divided by `u32::MAX`, so the quotient never exceeded
+    // ~0.5 and `q * 2.0 - 1.0` never became positive. Every "uniform [-1, 1]"
+    // vector this crate ever produced sat in the all-negative orthant, which
+    // put every pair at high cosine similarity — the opposite of the spread
+    // the comment promised.
+    ((*state >> 32) as u32) as f32 / u32::MAX as f32 * 2.0 - 1.0
+}
+
+/// Deterministic stand-in for a real embedding: unit-norm and clustered.
+///
+/// Two things were wrong with the previous generator. It claimed to emit
+/// "floats in [-1, 1]" and emitted [-1, 0] (see [`lcg`]), so every vector sat
+/// in the all-negative orthant at high mutual cosine similarity. And the
+/// coordinates were independent, which in high dimension puts every pair at
+/// nearly the same distance — "the nearest neighbour" becomes a coin-flip
+/// among thousands of ties. A real embedder does neither: its output is
+/// L2-normalised and concentrated near a low-dimensional manifold, and that
+/// structure is the whole reason an ANN index can index it. A test double
+/// without it makes every similarity-search test unrepresentative of the
+/// system it stands in for.
+///
+/// Scope note, so nobody re-derives a story this does not support: this was
+/// written while chasing a Moon compaction wedge (`merge recall 0.0000` →
+/// `MOONERR: busy: compaction backlog`), on the theory that tie-saturated
+/// vectors were collapsing Moon's merge-recall check. **That theory was
+/// tested and refuted** — the wedge reproduces identically with these
+/// clustered vectors. The fix stands on its own merits; it is not a fix for
+/// the wedge.
+///
+/// Determinism is unchanged: the same string always yields the same vector.
+pub fn det_vec(s: &str, dim: usize) -> Vec<f32> {
     let mut h = DefaultHasher::new();
     s.hash(&mut h);
-    let mut state = h.finish().max(1);
-    (0..dim)
-        .map(|_| {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-            let v = ((state >> 33) as u32) as f32 / u32::MAX as f32;
-            v * 2.0 - 1.0
-        })
-        .collect()
+    let hashed = h.finish().max(1);
+
+    // The centroid depends only on the cluster, so every string landing in a
+    // cluster shares it; the jitter depends on the string, so members stay
+    // distinct.
+    let mut centroid_state = (hashed % DET_VEC_CLUSTERS).wrapping_mul(0x9E37_79B9_7F4A_7C15).max(1);
+    let mut jitter_state = hashed;
+
+    let mut v: Vec<f32> = (0..dim)
+        .map(|_| lcg(&mut centroid_state) + lcg(&mut jitter_state) * DET_VEC_JITTER)
+        .collect();
+
+    let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm > f32::EPSILON {
+        for x in &mut v {
+            *x /= norm;
+        }
+    }
+    v
+}
+
+#[cfg(test)]
+mod det_vec_tests {
+    use super::*;
+
+    /// The doc on `det_vec` claims the vectors are clustered on the unit
+    /// sphere. Assert the geometry, not the prose: uniform noise passes a
+    /// "looks like floats" check just as well.
+    #[test]
+    fn det_vec_is_unit_norm_and_actually_clustered() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let dim = 768;
+        let cluster_of = |s: &str| {
+            let mut h = DefaultHasher::new();
+            s.hash(&mut h);
+            h.finish().max(1) % DET_VEC_CLUSTERS
+        };
+        let dot = |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| x * y).sum::<f32>();
+
+        let labels: Vec<String> = (0..4000).map(|i| format!("fact-{i}")).collect();
+        for l in labels.iter().take(50) {
+            let v = det_vec(l, dim);
+            assert!((dot(&v, &v) - 1.0).abs() < 1e-3, "{l}: not unit-norm ({})", dot(&v, &v));
+        }
+
+        // Average cosine within a cluster vs across clusters. On uniform noise
+        // both land near 0 and the gap vanishes; that indistinguishability is
+        // exactly what collapsed Moon's merge-recall check.
+        let (mut same, mut same_n, mut diff, mut diff_n) = (0.0f32, 0u32, 0.0f32, 0u32);
+        for (i, a) in labels.iter().enumerate().take(300) {
+            let va = det_vec(a, dim);
+            for b in labels.iter().skip(i + 1).take(300) {
+                let cos = dot(&va, &det_vec(b, dim));
+                if cluster_of(a) == cluster_of(b) {
+                    same += cos;
+                    same_n += 1;
+                } else {
+                    diff += cos;
+                    diff_n += 1;
+                }
+            }
+        }
+        assert!(same_n > 50 && diff_n > 50, "too few pairs: {same_n}/{diff_n}");
+        let (same, diff) = (same / same_n as f32, diff / diff_n as f32);
+        assert!(
+            same - diff > 0.5,
+            "cluster structure is too weak for an ANN index to find: \
+             same-cluster cosine {same:.3} vs cross-cluster {diff:.3}"
+        );
+    }
 }
 
 #[cfg(test)]

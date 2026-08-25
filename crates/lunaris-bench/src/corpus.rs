@@ -17,7 +17,7 @@
 //! - Per-fact bytes (id ULID, subject/object indices, predicate, embedding) all
 //!   derive from a `rand_chacha::ChaCha20Rng` seeded by the caller. Same seed +
 //!   same `count` → byte-identical corpus across runs / machines.
-//! - Embeddings use a `det_vec(text, dim)` helper that mirrors
+//! - Embeddings come from [`lunaris_core::det_vec`], the same function used by
 //!   `lunaris_core::embedder::StubEmbedder`'s LCG-via-DefaultHasher algorithm
 //!   so a `StubEmbedder`-driven recall query produces identical vectors to the
 //!   stored fact embeddings (lets the bench measure the storage hot path
@@ -371,23 +371,16 @@ fn entity_name(idx: usize) -> String {
 /// the StubEmbedder (which would force `lunaris-core::test-util` into the
 /// production dep tree). The two impls MUST stay in sync — there's a unit
 /// test below that hashes the output of both for a known input.
-fn det_vec(s: &str, dim: usize) -> Vec<f32> {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    let mut h = DefaultHasher::new();
-    s.hash(&mut h);
-    let mut state = h.finish().max(1);
-    (0..dim)
-        .map(|_| {
-            state = state
-                .wrapping_mul(6_364_136_223_846_793_005)
-                .wrapping_add(1_442_695_040_888_963_407);
-            let v = ((state >> 33) as u32) as f32 / u32::MAX as f32;
-            v * 2.0 - 1.0
-        })
-        .collect()
-}
+/// The corpus embeddings come from [`lunaris_core::det_vec`] — the same
+/// function `StubEmbedder` uses.
+///
+/// This crate used to carry its own byte-identical copy, with a test
+/// (`det_vec_matches_stub_embedder_per_string`) whose only job was to notice
+/// when the two drifted. Two implementations plus a test to keep them equal is
+/// strictly worse than one implementation: the copies shared a bug (a `>> 33`
+/// that pinned every vector to the negative orthant) and the test could not
+/// see it, because agreeing is not the same as being right.
+use lunaris_core::det_vec;
 
 // ----- corpus build -----
 
@@ -1073,10 +1066,11 @@ mod tests {
 
     #[test]
     fn det_vec_matches_stub_embedder_per_string() {
-        // The stored fact embedding (det_vec) MUST match what
-        // StubEmbedder::embed_batch returns for the same input — this is the
-        // determinism contract that lets the bench measure the storage hot
-        // path independent of the real EmbeddingGemma cost.
+        // The stored fact embedding MUST match what StubEmbedder::embed_batch
+        // returns for the same input — that is what lets the bench measure the
+        // storage hot path without paying for real inference. Both now call
+        // the same function, so this is cheap; it stays as the tripwire for
+        // anyone reintroducing a local copy.
         let stub = StubEmbedder::new(CORPUS_EMBEDDING_DIM);
         let fut = stub.embed_batch(&["hello world"]);
         let got = futures::executor::block_on(fut).expect("stub embed");
