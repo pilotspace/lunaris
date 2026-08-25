@@ -8,13 +8,29 @@ matrix goes to the output path so a ~1.5 MB payload never crosses a pipe.
 explicit re-export list and does not name it. Probing `lunaris` itself reports
 "missing" against a wheel that has it, which the driver would turn into a skip:
 a parity test that reports green having compared nothing. Resolve it where it
-actually is, and keep exit 3 for a wheel genuinely built without the feature.
+actually is, and keep exit 3 for a wheel genuinely built without the feature —
+or for no wheel at all, which is the case in jobs that build no SDK.
 """
 import asyncio
 import json
 import sys
 
-from lunaris import lunaris as _native
+try:
+    from lunaris import lunaris as _native
+except ModuleNotFoundError as exc:
+    # No wheel installed at all — `feature-build smoke (no backend)` runs
+    # `cargo test --features bindings-it` with no SDK build step, so this driver
+    # compiles and runs there with nothing to probe. That is the same condition
+    # exit 3 already means, but it surfaced as an unhandled import at MODULE
+    # scope, which exits 1 before main() can classify it.
+    #
+    # Narrow on purpose: only a missing `lunaris` package is a skip. A wheel
+    # that IS installed but fails to import its own native module is a real
+    # defect, and must keep failing loudly.
+    if (exc.name or "").split(".")[0] != "lunaris":
+        raise
+    print(f"WHEEL-NOT-INSTALLED: {exc}", file=sys.stderr)
+    sys.exit(3)
 
 
 async def main() -> int:
