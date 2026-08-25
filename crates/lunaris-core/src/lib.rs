@@ -37,7 +37,7 @@ pub use bitemporal::BiTemporal;
 pub use circuit_breaker::{CircuitBreaker, CircuitConfig, CircuitState};
 pub use embedder::{Embedder, FailingEmbedder, NOOP_DEFAULT_DIM, NoopEmbedder, StubEmbedder};
 pub use error::{
-    ConsolError, ExtractError, LunarisError, RetrieveError, StorageError, ValidateError,
+    ConsolError, ExtractError, LunarisError, RetrieveError, StorageError, Subsystem, ValidateError,
 };
 pub use hlc::{Hlc, HlcClock};
 pub use primitives::{Chunk, Community, Entity, Episode, Fact, Relation};
