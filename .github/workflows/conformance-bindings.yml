@@ -239,6 +239,27 @@ jobs:
         run: |
           cargo test -p lunaris-conformance --features bindings-it,embed-remote \
             --test run_bindings_backend_parity -- --nocapture
+      # W4.10 — cross-SDK embedder parity. Runs BOTH bindings over 100 fixed
+      # inputs and asserts the two 100x768 matrices are bit-identical: they
+      # link the same Rust embedder, so any difference is a binding-layer
+      # defect (codegen divergence, locale-dependent tokenisation, FFI float
+      # corruption — the family that produced the silent-zero-vectors P0).
+      #
+      # It embeds through `embedderConfigFromEnv`, the production
+      # GGUF -> remote -> Noop resolver, NOT through `llamacpp()`. No runner
+      # stages a GGUF, so a llamacpp-only probe could only ever skip here —
+      # and a permanent skip reads exactly like a passing check. Going
+      # through the resolver means this job compares real stub-embedder
+      # vectors while a developer's machine compares real llama.cpp vectors.
+      #
+      # STRICT so a missing prerequisite FAILS instead of quietly skipping;
+      # that is the specific defect the predecessor of this test shipped with.
+      - name: Rust - cross-SDK embedder parity
+        env:
+          LUNARIS_CONFORMANCE_STRICT: "1"
+        run: |
+          cargo test -p lunaris-conformance --features bindings-it,embed-remote \
+            --test run_sdk_embedder_parity -- --nocapture
       # W4.14 — the WHOLE suite, not just `backend_parity`.
       #
       # This is the only job in the repo that starts a Moon. Until now it ran
