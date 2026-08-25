@@ -1,0 +1,9 @@
+[package]
+name = "lunaris-book-tests"
+version = "0.7.1"
+edition = "2024"
+publish = false
+
+[dependencies]
+lunaris = { path = "../lunaris", package = "lunaris-memory" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

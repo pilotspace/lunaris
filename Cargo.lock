@@ -2313,6 +2313,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "lunaris-book-tests"
+version = "0.7.1"
+dependencies = [
+ "lunaris-memory",
+ "tokio",
+]
+
+[[package]]
 name = "lunaris-cli"
 version = "0.7.1"
 dependencies = [
