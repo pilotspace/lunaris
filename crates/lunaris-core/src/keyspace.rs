@@ -193,6 +193,36 @@ pub fn dedupe_key(scope: &Scope, raw: &str) -> Vec<u8> {
     format!("{}dedupe:{}", scope_prefix(scope), hash.to_hex()).into_bytes()
 }
 
+/// KV key for the source → episode secondary index (F40):
+/// `lunaris:{scope}:src:{blake3_hex(source)}`.
+///
+/// ## Why this exists
+///
+/// Nothing else indexes an Episode by its `source`. `WorkingMemory::read(k)` —
+/// nominally an EXACT-KEY read — therefore had to find the episode by RANKING:
+/// a fused Vector + BM25 `top(8)` whose first hit it took. With no usable
+/// embedder the vector leg carries no signal, so the read answered `Ok(None)`
+/// for a value that was definitely stored, and `None` is indistinguishable from
+/// "never written".
+///
+/// The value under this key is the 16 raw bytes of the episode's ULID, so a
+/// read is one KV get plus one `read_as_of` on `episode_key` — no retrieval,
+/// no embedding, no ranking.
+///
+/// `source` is blake3-hashed rather than spliced for the same reason
+/// [`dedupe_key`] hashes: a source is arbitrary caller-supplied text
+/// (`"agent/session-1/notes/../x.md"`), and splicing it could alias the
+/// `lunaris:{scope}:{kind}:{ulid}` format. Hashing closes that at the type
+/// level rather than by documenting a restriction on key names.
+///
+/// LAST-WRITER-WINS by construction: `WorkingMemory::write` overwrites the
+/// entry, which matches its contract ("read the latest content at `path`").
+#[inline]
+pub fn source_index_key(scope: &Scope, source: &str) -> Vec<u8> {
+    let hash = blake3::hash(source.as_bytes());
+    format!("{}src:{}", scope_prefix(scope), hash.to_hex()).into_bytes()
+}
+
 // ---------------------------------------------------------------------------
 // Scoped primitive scan-prefix helpers
 // ---------------------------------------------------------------------------
@@ -515,5 +545,39 @@ mod tests {
         // (e.g. contains `/` which is disallowed). Must return None — the
         // parser is the LAST defence and re-validates via Scope::new.
         assert!(parse_scope_from_key(b"lunaris:bad/scope:episode:01HZZZ").is_none());
+    }
+    #[test]
+    fn source_index_key_partitions_by_scope_and_by_source() {
+        let a = Scope::new("tenant-a").unwrap();
+        let b = Scope::new("tenant-b").unwrap();
+
+        // Different scope, same source — must not alias. This is the whole
+        // reason the key carries `scope_prefix`: the index is a NEW way for two
+        // tenants to read each other's episodes.
+        assert_ne!(source_index_key(&a, "notes/x.md"), source_index_key(&b, "notes/x.md"));
+
+        // Same scope, different source — must not alias.
+        assert_ne!(source_index_key(&a, "notes/x.md"), source_index_key(&a, "notes/y.md"));
+
+        // Same inputs — must be stable. A key derived from a non-deterministic
+        // hash would write one entry and read another, which looks exactly like
+        // "the key was never written".
+        assert_eq!(source_index_key(&a, "notes/x.md"), source_index_key(&a, "notes/x.md"));
+    }
+
+    #[test]
+    fn a_source_index_key_cannot_be_confused_for_a_primitive_key() {
+        let scope = Scope::new("t").unwrap();
+        // A source is arbitrary caller text. Hand it something shaped exactly
+        // like the `{kind}:{ulid}` tail of a primitive key and the result must
+        // still land under `src:` — the hash is what makes that true regardless
+        // of content, and splicing the source in would not.
+        let key = source_index_key(&scope, "episode:01HZZZZZZZZZZZZZZZZZZZZZZZ");
+        let rendered = String::from_utf8(key).unwrap();
+        assert!(
+            rendered.starts_with("lunaris:t:src:"),
+            "expected a src-namespaced key, got {rendered}"
+        );
+        assert!(!rendered.contains("episode:"), "the raw source leaked into the key: {rendered}");
     }
 }

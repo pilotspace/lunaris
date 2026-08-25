@@ -28,8 +28,8 @@ use futures::StreamExt;
 use lunaris_consolidate::{
     CONSOLIDATE_CONSUMER_GROUP, CONSOLIDATE_TOPIC, ConsolidateEvent, ConsolidationReport,
 };
-use lunaris_core::keyspace::episode_key;
-use lunaris_core::storage::types::{Filter, Lsn};
+use lunaris_core::keyspace::{episode_key, source_index_key};
+use lunaris_core::storage::types::{Filter, Lsn, WriteOp};
 use lunaris_core::{Episode, HlcClock, LunarisError, Scope, StorageError, StoragePort};
 use lunaris_retrieve::{Hit, Keyword, Query, Vector};
 use ulid::Ulid;
@@ -117,10 +117,44 @@ impl WorkingMemory {
         let source = self.scope_key(k);
         let content = serde_json::to_string(&v)
             .map_err(|e| LunarisError::from(lunaris_core::StorageError::from(e)))?;
-        let mut episode =
-            Episode::new(self.scope.clone(), source, content, self.lunaris.clock().as_ref());
+        let mut episode = Episode::new(
+            self.scope.clone(),
+            source.clone(),
+            content,
+            self.lunaris.clock().as_ref(),
+        );
         episode.t_ref = t_ref;
-        self.lunaris.ingest(episode).await
+        let episode_id = episode.id;
+        let lsn = self.lunaris.ingest(episode).await?;
+        self.record_source_index(&source, episode_id).await;
+        Ok(lsn)
+    }
+
+    /// Record `source -> episode_id` in the secondary index that makes
+    /// [`Self::read`] an exact-key read (F40).
+    ///
+    /// BEST-EFFORT, and deliberately so — it mirrors
+    /// `StoragePort::insert_dedupe_key`, the established precedent for a
+    /// sidecar written AFTER the pipeline's single `atomic_write`. Two
+    /// consequences worth stating rather than discovering:
+    ///
+    /// * **INGEST-04 is untouched.** This is a separate write by a caller of
+    ///   `ingest`, not a second `atomic_write` inside the ingest pipeline.
+    /// * **A failure here must not fail the write.** The value IS stored; only
+    ///   the fast path to it is missing, and [`Self::read`] falls back to the
+    ///   ranked search when the index has no entry. Turning a successful write
+    ///   into an error because an optimization sidecar failed would be a strict
+    ///   regression. It is logged at `warn` so the degradation is visible.
+    async fn record_source_index(&self, source: &str, episode_id: Ulid) {
+        let key = source_index_key(&self.scope, source);
+        let op = WriteOp::KvPut { key, value: episode_id.to_bytes().to_vec() };
+        if let Err(err) = self.lunaris.storage().atomic_write(&self.scope, &[op]).await {
+            tracing::warn!(
+                error = %err,
+                source = %source,
+                "working_memory_source_index_write_failed; read() falls back to the ranked path"
+            );
+        }
     }
 
     /// Read the value for `k` scoped under `scope_prefix`, if present.
@@ -130,13 +164,63 @@ impl WorkingMemory {
     /// rewrites quotes / dashes and corrupts JSON values — see
     /// `Self::recover_value`).
     pub async fn read(&self, k: &str) -> Result<Option<serde_json::Value>, LunarisError> {
-        let filter = Filter::Eq {
-            field: "source".into(),
-            value: serde_json::Value::String(self.scope_key(k)),
-        };
+        let source = self.scope_key(k);
+
+        // Exact-key path (F40). One KV get on the source index, then one on the
+        // episode. No embedding, no ranking, no top-k window — so this answers
+        // correctly on a build with no usable embedder, which the ranked path
+        // below cannot.
+        if let Some(id) = self.lookup_source_index(&source).await? {
+            // A hit here is authoritative for presence, but the episode row it
+            // names can still be gone (a `forget` tombstones the episode and
+            // does not sweep this sidecar). `recover_value` returning None then
+            // means "deleted", and falling through to the ranked path would not
+            // find it either — so return the None rather than re-searching.
+            return self.recover_value(&id).await;
+        }
+
+        // Fallback: entries written before this index existed have no sidecar,
+        // and a sidecar write can fail (it is best-effort by design). The
+        // ranked path is what those reads used and it still works wherever it
+        // worked before — this is strictly additive.
+        let filter =
+            Filter::Eq { field: "source".into(), value: serde_json::Value::String(source) };
         match self.find(k, filter).await?.into_iter().next() {
             Some(h) => self.recover_value(&h.episode_id).await,
             None => Ok(None),
+        }
+    }
+
+    /// Resolve `source` to an episode id through the F40 secondary index.
+    ///
+    /// `Ok(None)` means the index has no entry — which is NOT the same as "the
+    /// key does not exist", because entries written before the index existed
+    /// have none. The caller falls back rather than concluding absence.
+    async fn lookup_source_index(&self, source: &str) -> Result<Option<Vec<u8>>, LunarisError> {
+        let key = source_index_key(&self.scope, source);
+        let snapshot = HlcClock::new(0).tick();
+        match self.lunaris.storage().read_as_of(&self.scope, &key, snapshot).await {
+            Ok(Some(row)) if row.value.len() == 16 => Ok(Some(row.value.to_vec())),
+            // A row of the wrong width is corruption, not absence. Fall back to
+            // the ranked path rather than hand `recover_value` bytes it will
+            // silently reject with `Ok(None)` — which would read as "deleted".
+            Ok(Some(row)) => {
+                tracing::warn!(
+                    len = row.value.len(),
+                    source = %source,
+                    "working_memory_source_index_bad_width; falling back to the ranked path"
+                );
+                Ok(None)
+            }
+            Ok(None) => Ok(None),
+            // A fresh scope has no index yet: the KV namespace does not exist,
+            // which is "not found", never an error (same contract as `find`'s
+            // missing-index arm below). Classified on the `StorageError` itself
+            // — `is_ft_index_missing` takes a `LunarisError` and `StorageError`
+            // is not `Clone`, so wrapping it to ask would move it out of the
+            // arm that still needs to return it.
+            Err(err) if lunaris_retrieve::missing_index::is_index_absent(&err) => Ok(None),
+            Err(err) => Err(LunarisError::from(err)),
         }
     }
 
