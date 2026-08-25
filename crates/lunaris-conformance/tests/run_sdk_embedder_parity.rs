@@ -131,9 +131,15 @@ fn run_probe(label: &str, mut cmd: Command, out: &Path) -> anyhow::Result<Probe>
     match code {
         Some(0) => {}
         Some(c) if c == EXIT_NO_BINDINGS_IT => {
+            // Two distinct causes now share this code: an SDK built without
+            // `bindings-it`, and no SDK present at all (jobs that run this
+            // driver with no SDK build step). Carry the probe's own marker
+            // through so the skip line says WHICH — a skip that names the wrong
+            // reason sends the next reader to rebuild something that is fine.
             return Ok(Probe::Unavailable(format!(
-                "{label} was built WITHOUT the `bindings-it` feature, so it has no \
-                 embed-batch probe. Rebuild it with that feature to run this test."
+                "{label} has no embed-batch probe — built without `bindings-it`, or \
+                 not built at all: {}",
+                stderr.trim()
             )));
         }
         Some(c) if c == EXIT_NO_EMBEDDER => {

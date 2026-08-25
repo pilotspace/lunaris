@@ -29,14 +29,35 @@ function unwrap(m) {
   return m && typeof m === "object" && "default" in m && !("EmbedderConfig" in m) ? m.default : m;
 }
 
-let l = unwrap(await import(path.resolve(bindingPath)));
+const bindingDir = path.dirname(path.resolve(bindingPath));
+const nodeFile = fs.existsSync(bindingDir)
+  ? fs.readdirSync(bindingDir).find((f) => f.endsWith(".node"))
+  : undefined;
+
+let l;
+try {
+  l = unwrap(await import(path.resolve(bindingPath)));
+} catch (err) {
+  // `index.js` is COMMITTED, so it is present even in jobs that never run
+  // `napi build` — and napi's loader throws when the native binding beside it
+  // is absent. That is "no bindings available", the same condition exit 3
+  // already means, but it surfaced as an unhandled rejection: exit 1, which the
+  // driver refuses to treat as a skip. (`feature-build smoke (no backend)` runs
+  // this driver with no SDK build at all.)
+  //
+  // Narrow on purpose: only a MISSING `.node` is a skip. If one is present and
+  // still fails to load, that is a real defect and must keep failing loudly.
+  if (nodeFile) throw err;
+  process.stderr.write(`BINDING-NOT-BUILT: ${err?.message ?? err}\n`);
+  process.exit(3);
+}
 let via = bindingPath;
 
 if (!has(l)) {
   // The entry we were handed is a shim that does not re-export the hook. Ask
   // the binding itself before concluding the feature is absent.
-  const dir = path.dirname(path.resolve(bindingPath));
-  const node = fs.readdirSync(dir).find((f) => f.endsWith(".node"));
+  const dir = bindingDir;
+  const node = nodeFile;
   if (node) {
     const raw = require(path.join(dir, node));
     if (has(raw)) {
