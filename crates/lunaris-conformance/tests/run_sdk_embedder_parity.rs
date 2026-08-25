@@ -79,18 +79,29 @@ fn fixture(name: &str) -> PathBuf {
     workspace_root().join("crates/lunaris-conformance/fixtures/sdk_parity").join(name)
 }
 
-/// The Python interpreter to drive: `LUNARIS_PY`, else the maturin venv that
-/// `maturin develop` creates in-tree. The ambient `python3` is deliberately
-/// NOT a fallback — it almost certainly has no `lunaris` installed, and the
-/// resulting `ModuleNotFoundError` would read as a parity failure rather than
-/// as a missing prerequisite.
+/// The Python interpreter to drive, in order: `LUNARIS_PY`, then the venv
+/// named by `VIRTUAL_ENV`, then the in-tree venv `maturin develop` creates.
+///
+/// `VIRTUAL_ENV` is not optional polish — CI creates its venv at the REPO
+/// ROOT and exports it that way, so a check that only knew the in-tree path
+/// found no interpreter and, under strict mode, failed the job. The ambient
+/// `python3` is still deliberately NOT a fallback: it almost certainly has no
+/// `lunaris` installed, and the resulting `ModuleNotFoundError` would read as
+/// a parity failure rather than as a missing prerequisite.
 fn python_bin() -> Option<PathBuf> {
-    let p = std::env::var("LUNARIS_PY")
+    let explicit = std::env::var("LUNARIS_PY").ok().filter(|s| !s.trim().is_empty());
+    if let Some(p) = explicit.map(PathBuf::from) {
+        return p.exists().then_some(p);
+    }
+    let venv = std::env::var("VIRTUAL_ENV")
         .ok()
         .filter(|s| !s.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| workspace_root().join("crates/lunaris-py/.venv/bin/python"));
-    p.exists().then_some(p)
+        .map(|v| PathBuf::from(v).join("bin/python"));
+    if let Some(p) = venv.filter(|p| p.exists()) {
+        return Some(p);
+    }
+    let in_tree = workspace_root().join("crates/lunaris-py/.venv/bin/python");
+    in_tree.exists().then_some(in_tree)
 }
 
 /// The built napi binding to import. Defaults to `index.js` — the surface
