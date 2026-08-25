@@ -27,6 +27,19 @@ crates/lunaris/tests/coding_session_memory_smoke.rs::helios_doc_rag_50k_md_dual_
 crates/lunaris/tests/coding_session_memory_smoke.rs::coding_session_memory_v2_delegation_round_trip RUN_BY integration.yml / lunaris-memory step (--test coding_session_memory_smoke)
 crates/lunaris/tests/consolidator_scope_isolation.rs::consolidator_scope_isolation_dual_backend_live RUN_BY integration.yml / lunaris-memory step (--test consolidator_scope_isolation)
 
+# --- un-parked by a SIBLING TEST, not by a job ----------------------------
+# `announce_child_opens` is the child half of the W0.7 announcement test. It is
+# `#[ignore]`d so a normal run does not execute it directly; its parent,
+# `open_announces_a_degraded_backend_and_suppression_silences_it`, spawns the
+# test binary and invokes it BY NAME with `--ignored --exact`. So it runs on
+# every plain `cargo test -p lunaris-memory` — no job flag, no feature.
+#
+# Recorded rather than left to the reader: this is the one shape where a parked
+# test IS real coverage without any workflow naming it, and the parent asserts
+# `1 passed` on the child's stdout before reading anything into its silence, so
+# a child that stops running fails the parent instead of going quiet.
+crates/lunaris/tests/degraded_embedder_is_announced.rs::announce_child_opens RUN_BY its sibling test open_announces_a_degraded_backend_and_suppression_silences_it (spawns the test binary with --ignored --exact; runs on every cargo test)
+
 # --- runs nowhere ---------------------------------------------------------
 crates/lunaris/tests/chaos_helios_sigkill.rs::chaos_sigkill_helios_flow_zero_orphans RUN_BY integration.yml / "Run the SIGKILL chaos gate" step, at LUNARIS_CHAOS_HELIOS_ITERS=20. Its park reason was wrong AND incomplete: the "8-minute budget" was the job's observed duration not its timeout-minutes 25 cap (20 iters = 45-56s local), and the real blocker was the unbuilt `chaos` driver binary, which the reason never mentioned.
 crates/lunaris/tests/lazy_reranker_rss.rs::open_does_not_materialize_gguf_into_rss NEVER_RUN needs LUNARIS_RERANKER_GGUF + LUNARIS_RERANKER_DIR staged AND a release profile; no job stages the reranker artifacts.
