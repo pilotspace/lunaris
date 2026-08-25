@@ -3,6 +3,10 @@ name = "lunaris-book-tests"
 version = "0.7.1"
 edition = "2024"
 publish = false
+# Inherit the workspace Apache-2.0 licence. Without this cargo-deny's
+# `licenses` check rejects the crate outright as `unlicensed` — a workspace
+# member is part of the graph it audits even when it never ships.
+license.workspace = true
 
 # W4.18 — compile every Rust fence in docs/book through cargo's doctest path.
 #
