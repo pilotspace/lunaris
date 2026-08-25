@@ -30,6 +30,7 @@ pub mod protocol;
 pub mod recall;
 pub mod record_decision;
 pub mod record_edit;
+pub mod repair_vectors;
 pub mod resolve;
 pub mod scratchpad_consolidate;
 pub mod scratchpad_grep;

@@ -34,6 +34,21 @@ pub(crate) fn render(value: &Value, via: Route) -> String {
         if status == "preview" {
             out.push_str("nothing was deleted — re-run with --commit to apply\n");
         }
+    } else if value.get("unindexable").is_some() && value.get("scanned").is_some() {
+        let index = value.get("index").and_then(Value::as_str).unwrap_or("?");
+        let scanned = value.get("scanned").and_then(Value::as_u64).unwrap_or(0);
+        let bad = value.get("unindexable").and_then(Value::as_u64).unwrap_or(0);
+        let fixed = value.get("repaired").and_then(Value::as_u64).unwrap_or(0);
+        let dry = value.get("dry_run").and_then(Value::as_bool).unwrap_or(true);
+        let label = if dry { "preview" } else { "repaired" };
+        out.push_str(&format!(
+            "{label}: index={index} scanned={scanned} unindexable={bad} repaired={fixed}\n"
+        ));
+        if dry && bad > 0 {
+            out.push_str("nothing was changed — re-run with --commit to apply\n");
+        } else if dry {
+            out.push_str("no unindexable embeddings found in this scope\n");
+        }
     } else {
         // Status and anything else: pretty JSON beats a bespoke formatter that
         // silently drops fields as the response shape grows.

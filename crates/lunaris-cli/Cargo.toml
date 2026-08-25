@@ -91,3 +91,10 @@ embedded-moon = ["lunaris-memory-service/embedded-moon"]
 [dev-dependencies]
 lunaris-test-harness = { workspace = true }
 tempfile             = "3"
+# `repair-vectors` is the one subcommand whose effect is invisible in the
+# response alone — it either removed a field from a Moon hash or it did not.
+# Its end-to-end test therefore inspects the store directly, which needs the
+# Moon handle and the ULID/hex spellings of a row key.
+lunaris-storage-moon = { workspace = true }
+ulid                 = { workspace = true }
+hex                  = { workspace = true }
