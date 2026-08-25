@@ -26,7 +26,9 @@ spell out.
 `chunks` index — **no keyword fusion, no graph, no rerank**. Reach for it when a
 plain semantic lookup is all you need.
 
-```rust
+```rust,no_run
+# use lunaris::{Hit, Vector};
+# async fn demo() -> Result<(), lunaris::LunarisError> {
 use lunaris::{Lunaris, Query, Scope};
 
 let lunaris = Lunaris::open("moon://localhost:6380").await?;
@@ -34,6 +36,8 @@ let scoped  = lunaris.scoped(Scope::new("acme.agent-1")?);
 
 // One call, Vec<Hit> back. Default plan = Vector over `chunks`.
 let hits = scoped.recall(Query::text("who loves chocolate")).await?;
+# Ok(())
+# }
 ```
 
 **Form B — `scoped.dsl()…execute(query)` (composable).** Returns a
@@ -42,7 +46,12 @@ let hits = scoped.recall(Query::text("who loves chocolate")).await?;
 moment you want hybrid fusion, the graph or tree operators, time-travel, or
 reranking.
 
-```rust
+```rust,no_run
+# use lunaris::Lunaris;
+# use lunaris::Scope;
+# async fn demo() -> Result<(), lunaris::LunarisError> {
+# let lunaris = Lunaris::open("moon://localhost:6380").await?;
+# let scoped = lunaris.scoped(Scope::new("acme.agent-1")?);
 use lunaris::{Keyword, Query, Vector};
 
 // `scoped` is the handle from Form A above.
@@ -51,6 +60,8 @@ let hits = scoped
     .with_root(Vector::new("chunks", 30).and(Keyword::bm25("chunks", 30)).fuse_rrf(60).top(5))
     .execute(Query::text("who loves chocolate"))
     .await?;
+# Ok(())
+# }
 ```
 
 They are **the same machinery**: `recall(query)` is exactly `dsl()` with the
@@ -85,7 +96,8 @@ handle's storage / embedder / keyword Arcs **and the bound scope**, so only
 hits from that scope's partition come back. Its default root operator is
 `Vector::new("chunks", 30)`; you replace it with `.with_root(...)`.
 
-```rust
+```rust,no_run
+# async fn demo() -> Result<(), lunaris::LunarisError> {
 use lunaris::{Keyword, Lunaris, Query, Scope, Vector};
 
 let lunaris = Lunaris::open("moon://localhost:6380").await?;
@@ -96,6 +108,8 @@ let hits = scoped
     .with_root(Vector::new("chunks", 30).top(5))
     .execute(Query::text("brown fox"))
     .await?;
+# Ok(())
+# }
 ```
 
 > **`Lunaris::recall()` exists too**, but it seeds `Scope::dev()` and emits a
@@ -131,10 +145,13 @@ Top-`k` chunks by BM25 keyword score (min-max normalized).
 Breadth-first traversal out from known entities — "everything we know about
 Alice". `entity_ids` are pre-resolved `EntityId`s:
 
-```rust
+```rust,no_run
+# async fn demo() -> Result<(), lunaris::LunarisError> {
 use lunaris::{EntityId, Graph};
 let alice = EntityId::from_name_and_type("Alice", "Person");   // deterministic content hash
-let g = Graph::anchored(vec![alice], 2);
+let g = Graph::anchored(vec![(alice, 1.0)], 2);
+# Ok(())
+# }
 ```
 
 `hops` is clamped to `[1, MAX_GRAPH_HOPS = 5]`; `DEFAULT_GRAPH_HOPS = 2`.
@@ -153,7 +170,12 @@ beneath them. Because a summary node *semantically aggregates* its chunks, this
 surfaces whole-document and multi-hop answers whose constituent chunks fall
 outside a flat search's top-`k` budget.
 
-```rust
+```rust,no_run
+# use lunaris::Lunaris;
+# use lunaris::Scope;
+# async fn demo() -> Result<(), lunaris::LunarisError> {
+# let lunaris = Lunaris::open("moon://localhost:6380").await?;
+# let scoped = lunaris.scoped(Scope::new("acme.agent-1")?);
 use lunaris::{Query, Tree};
 
 // operator form — pass to .with_root() or compose with .and()/.fuse_rrf()
@@ -167,6 +189,8 @@ scoped.dsl()
     .tree("communities", 5, 1)
     .execute(Query::text("What are the main themes across both reports?"))
     .await?;
+# Ok(())
+# }
 ```
 
 - **`k`** — number of top community summary nodes to seed from (clamped to `MAX_K`).
@@ -180,7 +204,12 @@ scoped.dsl()
   `.top()`. Fuse it with a flat `Vector` branch to get pinpoint chunks **and**
   tree-aggregated coverage in one plan:
 
-```rust
+```rust,no_run
+# use lunaris::Lunaris;
+# use lunaris::Scope;
+# async fn demo() -> Result<(), lunaris::LunarisError> {
+# let lunaris = Lunaris::open("moon://localhost:6380").await?;
+# let scoped = lunaris.scoped(Scope::new("acme.agent-1")?);
 use lunaris::{Query, Tree, Vector};
 scoped.dsl().with_root(
     Vector::new("chunks", 30)
@@ -188,6 +217,8 @@ scoped.dsl().with_root(
         .fuse_rrf(60)
         .top(10),
 ).execute(Query::text("Summarize the incident and its root cause")).await?;
+# Ok(())
+# }
 ```
 
 > **Prerequisite:** the `communities` index must be populated. RAPTOR fills it at
@@ -217,11 +248,17 @@ Each operator carries `.and(other)`, `.or(other)`, `.then(other)`
 Reciprocal-rank fusion over the upstream branches. Each branch contributes
 `1 / (k + rank_i)`; `k = 60` is the conventional constant.
 
-```rust
+```rust,no_run
+# use lunaris::{Keyword, Vector};
+# async fn demo() -> Result<(), lunaris::LunarisError> {
+# let _operator_tree =
 Vector::new("chunks", 30)
     .and(Keyword::bm25("chunks", 30))
     .fuse_rrf(60)
     .top(5)
+# ;
+# Ok(())
+# }
 ```
 
 **Moon-native vs client-side.** When the handle was opened against a `moon://`
@@ -255,7 +292,13 @@ fires for the Vector+Keyword(BM25) case. The API is identical either way.
 Wrap the current root with a cross-encoder rerank pass over the top
 `DEFAULT_RERANK_TOP_IN = 30` candidates. Pass `lunaris.reranker()`:
 
-```rust
+```rust,no_run
+# use lunaris::{Keyword, Query, Vector};
+# use lunaris::Lunaris;
+# use lunaris::Scope;
+# async fn demo() -> Result<(), lunaris::LunarisError> {
+# let lunaris = Lunaris::open("moon://localhost:6380").await?;
+# let scoped = lunaris.scoped(Scope::new("acme.agent-1")?);
 scoped.dsl()
     .with_root(
         Vector::new("chunks", 30)
@@ -267,6 +310,8 @@ scoped.dsl()
     .top(5)
     .execute(Query::text("brown fox"))
     .await?;
+# Ok(())
+# }
 ```
 
 The default reranker is BGE-Reranker-v2-m3. **Budget seconds, not
@@ -293,7 +338,13 @@ once and pre-flags every hit when the depth crosses
 
 ## The build-up in four steps
 
-```rust
+```rust,no_run
+# use lunaris::{Keyword, Query, Vector};
+# use lunaris::Lunaris;
+# use lunaris::Scope;
+# async fn demo() -> Result<(), lunaris::LunarisError> {
+# let lunaris = Lunaris::open("moon://localhost:6380").await?;
+# let scoped = lunaris.scoped(Scope::new("acme.agent-1")?);
 // 1 — pure vector
 scoped.dsl().with_root(Vector::new("chunks", 30).top(5)).execute(Query::text("brown fox")).await?;
 
@@ -311,24 +362,36 @@ scoped.dsl().with_root(
 scoped.dsl().with_root(
     Vector::new("chunks", 30).and(Keyword::bm25("chunks", 30)).fuse_rrf(60).top(30),
 ).rerank(lunaris.reranker()).top(5).execute(Query::text("brown fox")).await?;
+# Ok(())
+# }
 ```
 
 Graph-aware: swap a branch for `Graph::anchored`:
 
-```rust
+```rust,no_run
+# use lunaris::Lunaris;
+# use lunaris::Scope;
+# async fn demo() -> Result<(), lunaris::LunarisError> {
+# let lunaris = Lunaris::open("moon://localhost:6380").await?;
+# let scoped = lunaris.scoped(Scope::new("acme.agent-1")?);
 use lunaris::{EntityId, Graph, Query, Vector};
 let alice = EntityId::from_name_and_type("Alice", "Person");
 scoped.dsl().with_root(
     Vector::new("chunks", 30)
-        .and(Graph::anchored(vec![alice], 2))
+        .and(Graph::anchored(vec![(alice, 1.0)], 2))
         .fuse_rrf(60)
         .top(30),
 ).rerank(lunaris.reranker()).top(5).execute(Query::text("Tell me about Alice")).await?;
+# Ok(())
+# }
 ```
 
 ## The `Hit` you get back
 
-```rust
+```rust,no_run
+# use lunaris::{Hit, SourceOp};
+# use lunaris_core::Hlc;
+# async fn demo() -> Result<(), lunaris::LunarisError> {
 pub struct Hit {
     pub id: Vec<u8>,            // backend id (a ULID's 16 bytes for chunks)
     pub score: f32,
@@ -341,6 +404,8 @@ pub struct Hit {
     pub rerank_applied: bool,   // the real cross-encoder ran (not the noop)
     pub source_op: SourceOp,    // which operator produced it (RRF groups by this)
 }
+# Ok(())
+# }
 ```
 
 `Query::text(t)` builds a default query (`k = 30`, no filter, no `as_of`); the

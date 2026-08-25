@@ -76,7 +76,7 @@ mirrors come right after.
 
 ### Rust
 
-```rust
+```rust,no_run
 use std::env;
 
 use anyhow::{Context, Result};
@@ -172,7 +172,11 @@ forget preview: preview=true rows_would_write=...
 > `fuse_rrf` collapses them into a single round trip, otherwise it fuses
 > the leg results client-side. Same API either way:
 >
-> ```rust
+> ```rust,no_run
+> # use lunaris::{Keyword, Lunaris, Query, Scope, Vector};
+> # async fn demo() -> Result<(), lunaris::LunarisError> {
+> # let lunaris = Lunaris::open("moon://localhost:6380").await?;
+> # let scoped = lunaris.scoped(Scope::new("quickstart")?);
 > use lunaris::{Keyword, Vector};
 > let hits = scoped
 >     .dsl()
@@ -184,6 +188,8 @@ forget preview: preview=true rows_would_write=...
 >     )
 >     .execute(Query::text("who loves chocolate"))
 >     .await?;
+> # Ok(())
+> # }
 > ```
 >
 > Add `.rerank(lunaris.reranker())` before `.top(5)` for the

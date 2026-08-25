@@ -21,6 +21,28 @@ pub enum LunarisError {
     Retrieve(#[from] RetrieveError),
     #[error("consolidate: {0}")]
     Consolidate(#[from] ConsolError),
+    /// A partition key was rejected by [`crate::Scope::new`].
+    ///
+    /// Added because `Result<_, LunarisError>` is the natural signature for a
+    /// function that talks to Lunaris, and naming a partition inside one is the
+    /// second thing every caller does:
+    ///
+    /// ```
+    /// # use lunaris_core::{LunarisError, Scope};
+    /// fn open_a_partition(name: &str) -> Result<Scope, LunarisError> {
+    ///     Ok(Scope::new(name)?)
+    /// }
+    /// ```
+    ///
+    /// Without this variant that `?` is E0277 and every caller has to write a
+    /// `map_err` that throws the reason away. Ten cookbook pages taught the
+    /// pattern above before anything compiled them (W4.18).
+    ///
+    /// Kept as its own variant rather than folded into a stringly one: a scope
+    /// typo and a storage outage are different problems and a reader triaging a
+    /// log should not have to tell them apart by message text.
+    #[error("scope: {0}")]
+    Scope(#[from] crate::ScopeError),
 }
 
 #[derive(Debug, Error)]

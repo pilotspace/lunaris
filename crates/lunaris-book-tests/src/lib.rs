@@ -3,6 +3,14 @@
 //! `mdbook test` CANNOT do this: it passes only `-L/--library-path`, and
 //! Rust 2018+ needs `--extern` to bind a crate name, so every fence fails
 //! with E0432 `unresolved import lunaris` regardless of its content.
+//!
+//! Book prose is markdown written for a reader, not rustdoc: it carries bare
+//! link lines, lazy list continuations and headings that rustdoc's doc lints
+//! read as malformed doc comments. Those lints are about the QUALITY OF A DOC
+//! COMMENT, and these are not doc comments — the only thing this crate asserts
+//! about the pages is that their Rust compiles.
+#![allow(clippy::doc_lazy_continuation, clippy::doc_markdown, clippy::tabs_in_doc_comments)]
+#![allow(rustdoc::bare_urls, rustdoc::broken_intra_doc_links, rustdoc::invalid_html_tags)]
 #[doc = include_str!("../../../docs/book/src/cookbook/chat-agent.md")]
 pub mod cookbook_chat_agent {}
 #[doc = include_str!("../../../docs/book/src/cookbook/conversational-channels.md")]

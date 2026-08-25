@@ -4,6 +4,30 @@ version = "0.7.1"
 edition = "2024"
 publish = false
 
+# W4.18 — compile every Rust fence in docs/book through cargo's doctest path.
+#
+# `mdbook test` cannot do this. It forwards only `-L/--library-path`, and
+# Rust 2018+ binds a crate name with `--extern`, so every fence fails with
+# E0432 `unresolved import lunaris` no matter what it contains. Pulling the
+# pages in with `#[doc = include_str!(..)]` hands them to rustdoc instead,
+# which links against this crate's real dependency graph.
+#
+# That graph is the contract: a book example may use exactly the crates a
+# reader would have. Every dependency below is one the fences already import,
+# found by compiling and reading the unresolved names rather than guessed —
+# `serde_json` alone accounted for 36 of the first run's errors.
 [dependencies]
 lunaris = { path = "../lunaris", package = "lunaris-memory" }
+# The cookbook pages are recipe walkthroughs; 16 unresolved names were this.
+lunaris-recipes = { workspace = true }
+# `Scope`, `Hlc` and friends, which a few pages import directly rather than
+# through the `lunaris` re-export.
+lunaris-core = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+# Every fence that builds a metadata payload or shows a JSON response.
+serde_json = { workspace = true }
+# The quickstart and the guides use `?` in `main` and initialise tracing,
+# exactly as a reader's binary would.
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

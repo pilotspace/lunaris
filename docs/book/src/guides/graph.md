@@ -8,7 +8,8 @@ local LLM, and unlocks the `Graph::anchored` [retrieval operator](./retrieval-ds
 
 ## Turning it on
 
-```rust
+```rust,no_run
+# async fn demo() -> Result<(), lunaris::LunarisError> {
 use lunaris::Lunaris;
 
 let lunaris = Lunaris::open("moon://localhost:6380").await?;
@@ -16,6 +17,8 @@ let lunaris = Lunaris::open("moon://localhost:6380").await?;
 // Runtime toggle — idempotent.
 lunaris.graph_pipeline().enable();
 // ... or LUNARIS_GRAPH_ENABLED=1 seeds the initial state at open time.
+# Ok(())
+# }
 ```
 
 `GraphPipelineHandle` (`crates/lunaris/src/graph_pipeline.rs`) exposes
@@ -63,7 +66,10 @@ is enabled. Cross-episode contradictions are deferred to the verifier.
 Once entities/relations have been written, compose `Graph::anchored` into the
 DSL:
 
-```rust
+```rust,no_run
+# use lunaris::Lunaris;
+# async fn demo() -> Result<(), lunaris::LunarisError> {
+# let lunaris = Lunaris::open("moon://localhost:6380").await?;
 use lunaris::{EntityId, Graph, Query, Scope, Vector};
 
 let scoped = lunaris.scoped(Scope::new("acme.agent-1")?);
@@ -73,7 +79,7 @@ let hits = scoped
     .dsl()
     .with_root(
         Vector::new("chunks", 30)
-            .and(Graph::anchored(vec![alice], 2))
+            .and(Graph::anchored(vec![(alice, 1.0)], 2))
             .fuse_rrf(60)
             .top(30),
     )
@@ -81,6 +87,8 @@ let hits = scoped
     .top(5)
     .execute(Query::text("Tell me about Alice"))
     .await?;
+# Ok(())
+# }
 ```
 
 - `hops` is clamped to `[1, MAX_GRAPH_HOPS = 5]`; `DEFAULT_GRAPH_HOPS = 2`.

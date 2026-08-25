@@ -14,10 +14,13 @@ newtype around `SmolStr` — short identifiers stay inline, clones are O(1).
 Two scopes compare equal iff their strings match byte-for-byte. **There is no
 implicit "default" scope** — you construct one explicitly.
 
-```rust
+```rust,no_run
+# async fn demo() -> Result<(), lunaris::LunarisError> {
 use lunaris::Scope;
 let s = Scope::new("acme.agent-1")?;   // -> Ok(Scope)
 assert_eq!(s.as_str(), "acme.agent-1");
+# Ok(())
+# }
 ```
 
 ### Alphabet — `[A-Za-z0-9_\-.]{1,128}`, no colons
@@ -44,7 +47,8 @@ not `acme:agent-42`.
 
 ## Binding an engine to a scope — `ScopedLunaris<'a>`
 
-```rust
+```rust,no_run
+# async fn demo() -> Result<(), lunaris::LunarisError> {
 use lunaris::{EpisodeBuilder, Lunaris, Query, Scope, Vector};
 
 let lunaris = Lunaris::open("moon://127.0.0.1:6380").await?;
@@ -55,6 +59,8 @@ let hits = scoped.dsl()
     .with_root(Vector::new("chunks", 30).top(5))
     .execute(Query::text("Alice"))
     .await?;
+# Ok(())
+# }
 ```
 
 `ScopedLunaris::ingest` takes an `EpisodeBuilder` (scope-less payload) and
@@ -232,7 +238,8 @@ native granite-r2 default) and the same code recalls semantically.
 
 **Handle construction (what the example actually does — no model download):**
 
-```rust
+```rust,no_run
+# async fn demo() -> Result<(), lunaris::LunarisError> {
 use std::sync::Arc;
 use lunaris::{Embedder, HlcClock, KeywordPort, Lunaris, MoonStorage, StoragePort, StubEmbedder};
 
@@ -243,11 +250,17 @@ let embedder: Arc<dyn Embedder>    = Arc::new(StubEmbedder::new(768));   // 768d
 let lunaris = Lunaris::with_parts_keyword(storage, keyword, embedder, HlcClock::new(0));
 // Production: `let lunaris = Lunaris::open("moon://localhost:6380").await?;` instead — the
 // native granite-r2 default downloads granite-embedding-311m-multilingual-r2 weights once and recalls semantically.
+# Ok(())
+# }
 ```
 
 **Agent-a vs agent-b — the scoped handle is the wall:**
 
-```rust
+```rust,no_run
+# use lunaris::Lunaris;
+# async fn demo() -> Result<(), lunaris::LunarisError> {
+# let lunaris = Lunaris::open("moon://localhost:6380").await?;
+# let scoped = lunaris.scoped(Scope::new("acme.agent-1")?);
 use lunaris::{EpisodeBuilder, Query, Scope, Vector};
 
 let scoped_a = lunaris.scoped(Scope::new("acme.agent-a")?);
@@ -260,11 +273,19 @@ let a_hits = scoped_a.dsl().with_root(Vector::new("chunks", 30).top(5)).execute(
 let b_hits = scoped_b.dsl().with_root(Vector::new("chunks", 30).top(5)).execute(Query::text("owner")).await?;
 assert!(a_hits.iter().all(|h| h.source.starts_with("agent-a:")));   // no agent-b leak
 assert!(b_hits.iter().all(|h| h.source.starts_with("agent-b:")));   // no agent-a leak
+# Ok(())
+# }
 ```
 
 **Sessions / tasks within one agent — the `source` field:**
 
-```rust
+```rust,no_run
+# use lunaris::{EpisodeBuilder, Hit, Query, Vector};
+# use lunaris::Lunaris;
+# use lunaris::Scope;
+# async fn demo() -> Result<(), lunaris::LunarisError> {
+# let lunaris = Lunaris::open("moon://localhost:6380").await?;
+# let scoped_a = lunaris.scoped(Scope::new("acme.agent-1")?);
 // The first arg to EpisodeBuilder::new IS the `source` — encode the session there.
 // EpisodeBuilder auto-generates a fresh ULID per episode; override with `.id(...)`
 // only for idempotent replay.
@@ -278,16 +299,24 @@ let all = scoped_a.dsl().with_root(Vector::new("chunks", 30).top(5)).execute(Que
 // source-prefix push-down today; the v0 `filter_str` DSL targets episode
 // METADATA, not the source string):
 let mon_only: Vec<_> = all.iter().filter(|h| h.source.starts_with("conv:mon")).collect();
+# Ok(())
+# }
 ```
 
 **Resume across a process boundary — re-open + re-scope, no load step:**
 
-```rust
+```rust,no_run
+# use lunaris::{Lunaris, Query, Scope, Vector};
+# async fn demo() -> Result<(), lunaris::LunarisError> {
+# let lunaris = Lunaris::open("moon://localhost:6380").await?;
+# let scoped = lunaris.scoped(Scope::new("acme.agent-1")?);
 drop(lunaris);                                          // process exits
 let lunaris = Lunaris::open("moon://localhost:6380").await?;   // new process
 let scoped_a = lunaris.scoped(Scope::new("acme.agent-a")?);
 let hits = scoped_a.dsl().with_root(Vector::new("chunks", 30).top(5)).execute(Query::text("owner")).await?;
 assert!(!hits.is_empty());                              // agent-a's episodes are still there
+# Ok(())
+# }
 ```
 
 > **Episode IDs.** `EpisodeBuilder` auto-generates a fresh ULID per episode

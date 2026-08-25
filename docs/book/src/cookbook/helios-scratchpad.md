@@ -1,12 +1,12 @@
 # Helios Scratchpad
 
-**Reach for `HeliosScratchpad` when an agent needs a filesystem-shaped
+**Reach for `CodingSessionMemory` when an agent needs a filesystem-shaped
 working store — `write` / `read` / `edit` / `grep` / `ls` over a
 session-scoped namespace — backed by Lunaris's bi-temporal MVCC store, with
 `as_of` time-travel for free.**
 
-`HeliosScratchpad` is exported by the umbrella `lunaris` crate (not
-`lunaris-recipes`) — `use lunaris::{HeliosScratchpad, Lunaris, Hlc};`. It
+`CodingSessionMemory` is exported by the umbrella `lunaris` crate (not
+`lunaris-recipes`) — `use lunaris::{CodingSessionMemory, Lunaris, Scope, Hlc};`. It
 was built for [Helios](https://github.com/pilotspace/lunaris), Lunaris's
 first downstream consumer, which replaces deepagents' ephemeral `dict`-backed
 mock filesystem with a real bi-temporal store. It is a convenience over the
@@ -20,7 +20,7 @@ primitive — Lunaris doesn't know Helios exists; the recipe is not a coupling.
 
 ## The frozen 9-method surface
 
-`HeliosScratchpad` holds an `Arc<Lunaris>` + a `session_prefix` (e.g.
+`CodingSessionMemory` holds an `Arc<Lunaris>` + a `session_prefix` (e.g.
 `"helios:fs/session-42/"`) + a delegated `WorkingMemory` (itself
 `Arc<Lunaris>` + `String`), and is `Clone` (every field is cheap). Its
 public surface is frozen at nine symbols — the
@@ -70,7 +70,7 @@ A few load-bearing facts:
   you drop to the `Lunaris` handle's two-step `confirm_hard_forget` rail.
   See [Forgetting](../guides/forget.md).
 - **`as_of` returns a borrowed, read-only view.** `AsOfScratchpad<'a>` holds
-  `&HeliosScratchpad` so the borrow checker stops you moving the pad while a
+  `&CodingSessionMemory` so the borrow checker stops you moving the pad while a
   time-travel view is alive. Its only method is `read(path)`. There is no
   historical `write` / `edit` / `grep` / `forget`.
 
@@ -82,7 +82,7 @@ handle itself. The recipe is intentionally narrow.
 
 ```rust,no_run
 use std::sync::Arc;
-use lunaris::{HeliosScratchpad, Lunaris};
+use lunaris::{CodingSessionMemory, Lunaris, Scope};
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
@@ -90,7 +90,8 @@ async fn main() -> Result<(), lunaris::LunarisError> {
     let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
 
     // Session prefix becomes "helios:fs/session-42/".
-    let pad = HeliosScratchpad::new(lunaris.clone(), "session-42");
+    let scope = Scope::new("helios")?;
+    let pad = CodingSessionMemory::new(lunaris.clone(), scope, "session-42");
 
     // Write two docs.
     pad.write("notes.md", "# Notes\nFirst draft.").await?;
@@ -125,12 +126,13 @@ async fn main() -> Result<(), lunaris::LunarisError> {
 
 ```rust,no_run
 use std::sync::Arc;
-use lunaris::{HeliosScratchpad, Hlc, Lunaris};
+use lunaris::{CodingSessionMemory, Hlc, Lunaris, Scope};
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
     let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
-    let pad = HeliosScratchpad::new(lunaris.clone(), "session-42");
+    let scope = Scope::new("helios")?;
+    let pad = CodingSessionMemory::new(lunaris.clone(), scope, "session-42");
 
     // t1: agent writes the first draft.
     pad.write("plan.md", "Plan v1: go left").await?;
@@ -158,19 +160,19 @@ async fn main() -> Result<(), lunaris::LunarisError> {
 
 ## Notes
 
-- **Resuming a session needs no load step.** `HeliosScratchpad::new(handle,
+- **Resuming a session needs no load step.** `CodingSessionMemory::new(handle,
   session_id)` is pure (no I/O) — it just builds the
   `"helios:fs/<session_id>/"` prefix. A later process that reconstructs the pad
   with the same `session_id` sees every prior `write` / `edit` (the data lives
   in the durable backend keyspace `lunaris:{scope}:{kind}:{ulid}`); a
   `pad.as_of(ts)` view still reads any historical state. Same id ⇒ same pad —
   which is also why two pads with the same id co-mingle.
-- **`HeliosScratchpad` is the recipe; `WorkingMemory` is the primitive.**
+- **`CodingSessionMemory` is the recipe; `WorkingMemory` is the primitive.**
   If you want a JSON-valued scratchpad rather than a string-valued
   filesystem, use [`WorkingMemory`](./index.md#workingmemory--scope-prefixed-scratchpad)
   directly. If you want consolidator promotion of hot notes, that is
   toggled per-scope on the consolidator pipeline (
-  `lunaris.consolidator_pipeline()...`) — `HeliosScratchpad` itself adds no
+  `lunaris.consolidator_pipeline()...`) — `CodingSessionMemory` itself adds no
   `consolidate` method.
 - **Backend** — `moon://host:port` is the only selector as of 0.7.0. The
   latency budget is Moon recall p50 ≤ 25 ms; see

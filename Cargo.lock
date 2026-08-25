@@ -2316,8 +2316,14 @@ dependencies = [
 name = "lunaris-book-tests"
 version = "0.7.1"
 dependencies = [
+ "anyhow",
+ "lunaris-core",
  "lunaris-memory",
+ "lunaris-recipes",
+ "serde_json",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

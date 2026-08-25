@@ -7,7 +7,8 @@ whether the [graph pipeline](./graph.md) is on or off.
 
 ## The shape
 
-```rust
+```rust,no_run
+# async fn demo() -> Result<(), lunaris::LunarisError> {
 use lunaris::{EpisodeBuilder, Lunaris, Scope};
 
 let lunaris = Lunaris::open("moon://127.0.0.1:6380").await?;
@@ -17,6 +18,8 @@ let scoped  = lunaris.scoped(scope);
 let lsn = scoped
     .ingest(EpisodeBuilder::new("notes.md", "# Notes\nThe quick brown fox."))
     .await?;
+# Ok(())
+# }
 ```
 
 `EpisodeBuilder` (`crates/lunaris/src/episode_builder.rs`) is a *scope-less*

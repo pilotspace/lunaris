@@ -15,13 +15,17 @@ signature.
 `lunaris` re-exports the surface you normally touch. For the common subset,
 glob-import the prelude:
 
-```rust
+```rust,no_run
+# use lunaris::{EpisodeBuilder, ForgetTarget, Graph, Hit, Keyword, Lunaris, Query, Scope, ScopeSpec, Tree, Vector};
+# async fn demo() -> Result<(), lunaris::LunarisError> {
 use lunaris::prelude::*;
 // → Lunaris, ScopedLunaris, Scope, EpisodeBuilder, Query, Hit,
 //   Vector, Keyword, Graph, Tree, RetrievalBuilder, ForgetTarget, ScopeSpec,
 //   LunarisError, Embedder, HlcClock,
 //   Reranker/NoopReranker, Extractor/NoopExtractor,
 //   Verifier/NoopVerifier, Consolidator/NoopConsolidator
+# Ok(())
+# }
 ```
 
 The prelude is intentionally small. Reach into the full re-export list (or the
