@@ -100,10 +100,39 @@ jobs:
           shared-key: moon-ci-${{ steps.moon-sha.outputs.sha }}
 
       - name: Build Moon (release, from vendor/moon submodule)
+        # The job-level `CARGO_TARGET_DIR` MUST be overridden here.
+        #
+        # This job pins `CARGO_TARGET_DIR` so the bench and the gate cannot
+        # disagree about where Criterion data lives. That pin also captures
+        # THIS build: without the override, Moon lands in the lunaris target
+        # dir, `MOON_BINARY` points at a path nothing ever wrote, and
+        # `reset_moon.sh` fails with a bare `No such file or directory`.
+        # Observed on run 32829840092.
+        #
+        # It is the same defect the header warns about for Criterion — one
+        # step writes somewhere, another reads somewhere else — reintroduced
+        # by the very fix for it. Keeping Moon in its own target dir also
+        # keeps the `vendor/moon -> vendor/moon/target` cache entry truthful,
+        # and keeps two separate cargo workspaces out of one artifact
+        # directory.
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/vendor/moon/target
         run: |
           cargo build --release \
             --manifest-path vendor/moon/Cargo.toml \
             --bin moon
+
+      - name: Prove the Moon binary is where MOON_BINARY says
+        # A missing binary must name itself here, not surface three steps
+        # later as a shell error from inside reset_moon.sh.
+        run: |
+          if [ ! -x "$MOON_BINARY" ]; then
+            echo "::error::MOON_BINARY=$MOON_BINARY does not exist or is not executable."
+            echo "The build step wrote somewhere else — check CARGO_TARGET_DIR."
+            ls -la "$(dirname "$MOON_BINARY")" || true
+            exit 1
+          fi
+          echo "moon binary present: $MOON_BINARY"
 
       - name: Launch Moon (port 6390, single shard, fresh data dir)
         # `--shards 1` is REQUIRED: Lunaris ingest is a single MULTI/EXEC TXN
@@ -133,6 +162,12 @@ jobs:
         # shows, rather than as a confusing SKIP inside the gate.
         if: success() || failure()
         run: |
+          if [ ! -d "$CARGO_TARGET_DIR/criterion" ]; then
+            echo "no criterion directory at $CARGO_TARGET_DIR/criterion — the bench step wrote nothing"
+            exit 0
+          fi
+          n=$(find "$CARGO_TARGET_DIR/criterion" -name estimates.json | wc -l)
+          echo "estimates.json files: $n"
           find "$CARGO_TARGET_DIR/criterion" -name estimates.json \
             | sed "s|$CARGO_TARGET_DIR/criterion/||" | sort
 
