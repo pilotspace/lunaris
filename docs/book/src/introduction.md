@@ -29,7 +29,8 @@ substrate (and, as of 0.7.0, the only backend). Agents query it through a
 composable retrieval DSL that fuses semantic search, graph traversal, and
 BM25 keyword lookup, with an optional cross-encoder rerank pass on top.
 
-```rust
+```rust,no_run
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
 use lunaris::{EpisodeBuilder, Lunaris, Query, Scope};
 
 let lunaris = Lunaris::open("moon://127.0.0.1:6380").await?;
@@ -38,12 +39,18 @@ let scoped  = lunaris.scoped(scope);
 
 let lsn  = scoped.ingest(EpisodeBuilder::new("user-msg", "Alice loves chocolate.")).await?;
 let hits = scoped.recall(Query::text("what does Alice like?")).await?;
+# Ok(())
+# }
 ```
 
 Want a hybrid plan (vector + BM25, fused, reranked)? Compose it with the
 [retrieval DSL](./guides/retrieval-dsl.md):
 
-```rust
+```rust,no_run
+# use lunaris::{Lunaris, Scope};
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+# let lunaris = Lunaris::open("moon://127.0.0.1:6380").await?;
+# let scoped = lunaris.scoped(Scope::new("acme.agent-1")?);
 use lunaris::{Keyword, Query, Vector};
 
 let hits = scoped
@@ -51,6 +58,8 @@ let hits = scoped
     .with_root(Vector::new("chunks", 30).and(Keyword::bm25("chunks", 30)).fuse_rrf(60).top(5))
     .execute(Query::text("what does Alice like?"))
     .await?;
+# Ok(())
+# }
 ```
 
 ## Use it from your agent (MCP)

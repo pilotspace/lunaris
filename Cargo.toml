@@ -10,6 +10,8 @@ members = [
   "crates/lunaris-verify",
   "crates/lunaris",
   "crates/lunaris-bench",
+  # SPIKE (W4.18): compiles the book's rust fences via cargo's doctest path.
+  "crates/lunaris-book-tests",
   "crates/lunaris-conformance",
   # Plan 08-01: lunaris-codegen sits next to lunaris-conformance per the plan's
   # explicit workspace-grouping rule — both are metadata/plumbing crates; placing
