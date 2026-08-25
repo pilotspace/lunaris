@@ -209,9 +209,18 @@ fn sweep_budgets(target_root: &Path) -> Sweep {
             Ok(CheckOutcome::Reported(rep)) => {
                 let id = format!("{}/{}/{}", rep.group, rep.bench, rep.label);
                 if rep.p50_within_budget && rep.p99_within_budget {
+                    // A row with no p99 contract has `p99_budget_ms == 0`, and
+                    // rendering that as "p99 2.18 ms ≤ 0.00 ms" on a PASS line
+                    // reads as a gate that checked something impossible and
+                    // shrugged. Say what is actually true instead.
+                    let p99 = if rep.p99_budget_ms == 0.0 {
+                        format!("p99 {:.2} ms (no p99 contract for this row)", rep.p99_ms)
+                    } else {
+                        format!("p99 {:.2} ms ≤ {:.2} ms", rep.p99_ms, rep.p99_budget_ms)
+                    };
                     sweep.passed.push(format!(
-                        "{id} → p50 {:.2} ms ≤ {:.2} ms; p99 {:.2} ms ≤ {:.2} ms",
-                        rep.p50_ms, rep.p50_budget_ms, rep.p99_ms, rep.p99_budget_ms
+                        "{id} → p50 {:.2} ms ≤ {:.2} ms; {p99}",
+                        rep.p50_ms, rep.p50_budget_ms
                     ));
                 } else {
                     sweep.hard_failures.push(format!("{id} → {}", format_failure(&rep)));

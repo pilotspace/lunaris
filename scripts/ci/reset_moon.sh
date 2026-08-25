@@ -99,7 +99,30 @@ fi
 rm -rf "$DIR"
 mkdir -p "$DIR"
 echo "=== moon restart on empty $DIR ===" >> "$LOG"
-"$BIN" --port "$PORT" --shards 1 --dir "$DIR" >> "$LOG" 2>&1 &
+# MOON_MAX_UNFLUSHED_SEGMENTS — opt-in, and deliberately NOT the default.
+#
+# Moon stalls every foreground write with `MOONERR busy: compaction backlog`
+# once `--max-unflushed-immutable-segments` (default 20) immutable vector
+# segments pile up. On Moon 0.8.5 that backlog can never drain under sustained
+# ingest: the background merge's recall verifier returns exactly 0.0000, aborts,
+# and backs off 60s -> 120s -> 240s forever. The store then has no in-band
+# recovery — `FT.CONFIG SET <idx> MERGE_RECALL_TOLERANCE 0`, the remedy Moon's
+# own log recommends, is itself a foreground write and is stalled too, and
+# `FT.COMPACT` returns the backlog error despite `shard/segment_stall.rs`
+# documenting it as exempt. Measured on a clean Linux runner and twice on macOS.
+#
+# Setting this to 0 disables ONLY the write-stall backpressure. It does not
+# touch the recall verifier, so no merge is waved through and no index is
+# silently degraded — segments simply accumulate. That is acceptable for a
+# throwaway benchmark store and is NOT acceptable for the integration suites,
+# which is why this is opt-in per workflow rather than a change to the default.
+EXTRA_ARGS=()
+if [ -n "${MOON_MAX_UNFLUSHED_SEGMENTS:-}" ]; then
+  EXTRA_ARGS+=(--max-unflushed-immutable-segments "$MOON_MAX_UNFLUSHED_SEGMENTS")
+  echo "reset_moon: --max-unflushed-immutable-segments $MOON_MAX_UNFLUSHED_SEGMENTS"
+fi
+
+"$BIN" --port "$PORT" --shards 1 --dir "$DIR" "${EXTRA_ARGS[@]}" >> "$LOG" 2>&1 &
 MOON_PID=$!
 if [ -n "${GITHUB_ENV:-}" ]; then
   echo "MOON_PID=$MOON_PID" >> "$GITHUB_ENV"

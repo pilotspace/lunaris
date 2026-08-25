@@ -142,6 +142,14 @@ jobs:
         env:
           MOON_DATA_DIR: ${{ runner.temp }}/moon-data
           MOON_LOG: ${{ runner.temp }}/moon.log
+          # Criterion drives tens of thousands of writes in seconds, which piles
+          # up immutable vector segments faster than Moon 0.8.5 can merge them —
+          # and on 0.8.5 it never merges them at all (the recall verifier returns
+          # 0.0000 and backs off forever), so the default stall trigger of 20
+          # wedges the store permanently mid-bench. This disables the stall
+          # backpressure ONLY; the recall verifier is untouched, so nothing is
+          # waved through. See scripts/ci/reset_moon.sh for the full mechanism.
+          MOON_MAX_UNFLUSHED_SEGMENTS: "0"
         run: bash scripts/ci/reset_moon.sh
 
       - name: Run the four budgeted benches
