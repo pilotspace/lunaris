@@ -25,8 +25,12 @@ struct Backend {
     env: &'static str,
 }
 
-const BACKENDS: &[Backend] =
-    &[Backend { label: "moon", env: "MOON_URL" }, Backend { label: "postgres", env: "PG_URL" }];
+/// 0.7.0 is Moon-only. The `postgres` row (`PG_URL`) was removed with the
+/// backend; leaving it would have opened a `postgres://` URL that now returns
+/// `UnsupportedScheme`, turning a retired budget into a bench failure. The
+/// table shape stays so a second store can be added back without restructuring
+/// the loop.
+const BACKENDS: &[Backend] = &[Backend { label: "moon", env: "MOON_URL" }];
 
 const EMBEDDING_DIM: usize = 768;
 

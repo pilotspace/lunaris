@@ -31,10 +31,10 @@ Four features gated real test files while NO `cargo test` anywhere in
   verifier slots REMOTE-ONLY, so this is the wiring for the primary LLM
   path. The feature appears in CI only under `cargo check`, which compiles
   a test binary and never runs it.
-- `budget-it`      -- `lunaris-bench/tests/budget_assertions.rs`, which reads
-  Criterion output and asserts the p50/p99 latency budgets. This is the
-  implementation the retracted "latency contract enforced in CI" claim
-  (W2.4) pointed at. It has never run in CI.
+- `budget-it`      -- `lunaris-bench/tests/budget_assertions.rs`. RESOLVED by
+  W4.9: the rows were re-derived Moon-only and `latency-budgets.yml` now runs
+  the four benches it reads and then the suite itself. The allowlist is empty
+  again, which is the state it should spend most of its life in.
 - `sdk-parity-it`  -- `lunaris-conformance/tests/sdk_embedder_parity.rs`, since
   DELETED (W4.10): it drove both SDKs through `EmbedderConfig.fastembed()`,
   an API the v0.6 llama.cpp-only cutover retired, so its subject no longer
@@ -81,15 +81,7 @@ RUNNERS = re.compile(r"\bcargo\s+(?:\+\S+\s+)?(?:test|nextest\s+run)\b")
 # An orphaned (crate, feature) pair may sit here ONLY with a reason naming the
 # tracking task. An entry without a reason is refused by the test below, which
 # is what keeps this from decaying into a rubber stamp.
-ALLOWLIST: dict[tuple[str, str], str] = {
-    ("lunaris-bench", "budget-it"): (
-        "W1.7/S4 -- budget_assertions.rs reads Criterion output and asserts the "
-        "blueprint p50/p99 budgets, but its row set still names 'Moon + Postgres' "
-        "and Postgres was deleted in 0.7.0, so the assertions cannot be trusted "
-        "until the rows are re-derived. Wiring it into CI before that re-derivation "
-        "would enforce a contract nobody has re-checked. Tracked as W4.9."
-    ),
-}
+ALLOWLIST: dict[tuple[str, str], str] = {}
 
 
 def _gated_test_files() -> list[tuple[str, str, Path]]:

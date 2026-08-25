@@ -91,8 +91,12 @@ struct Backend {
     env: &'static str,
 }
 
-const BACKENDS: &[Backend] =
-    &[Backend { label: "moon", env: "MOON_URL" }, Backend { label: "postgres", env: "PG_URL" }];
+/// 0.7.0 is Moon-only. The `postgres` row (`PG_URL`) was removed with the
+/// backend; leaving it would have opened a `postgres://` URL that now returns
+/// `UnsupportedScheme`, turning a retired budget into a bench failure. The
+/// table shape stays so a second store can be added back without restructuring
+/// the loop.
+const BACKENDS: &[Backend] = &[Backend { label: "moon", env: "MOON_URL" }];
 
 /// Pre-generated note-paths the bench loop draws from. The warm-up seeds each
 /// path with a non-empty body so `read` + `edit` + `grep` all find content.
@@ -345,11 +349,11 @@ fn moon_version_probe(label: &str) -> String {
         .unwrap_or_else(|| "unknown".into())
 }
 
-fn pg_version_probe(label: &str) -> String {
-    if label != "postgres" {
-        return "n/a".into();
-    }
-    probe_cmd(&["psql", "--version"]).unwrap_or_else(|| "unknown".into())
+/// 0.7.0 deleted the Postgres backend, so `label` is always "moon" and this
+/// probe can only ever answer "n/a". Kept as a named constant rather than
+/// deleted so the provenance record its caller emits keeps the same shape.
+fn pg_version_probe(_label: &str) -> String {
+    "n/a".into()
 }
 
 fn cpu_model_probe() -> String {

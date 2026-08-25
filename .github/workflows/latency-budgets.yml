@@ -1,0 +1,143 @@
+# latency-budgets.yml — blueprint §4.1/§4.2 latency budget enforcement.
+#
+# Runs the four Criterion benches `crates/lunaris-bench/tests/budget_assertions.rs`
+# reads, then runs that suite with `--features budget-it` to grade them.
+#
+# ## Why this workflow exists
+#
+# The suite is the implementation the retracted "latency contract enforced in
+# CI" claim (ship-plan W2.4) pointed at, and it had never run. Nothing passed
+# `--features budget-it`, so it compiled to nothing under `cargo test
+# --workspace`; and nothing ran `ingest_hot_path`, `recall_hot_path`,
+# `atomic_write_hot_path` or `helios_p50`, so even had it run it would have
+# found no Criterion data, skipped all ten rows, and reported success having
+# measured nothing. Both halves are fixed: the benches run here, and
+# `Sweep::verdict` fails on a sweep that measured nothing or only part.
+#
+# ## Trigger policy
+#
+# Not on every PR. The recall row needs a 1M-fact corpus (~5-10 min to build
+# on a cold store), which is too much to spend on every push. Same opt-in
+# shape perf-gates.yml already uses: pushes to main that touch the bench crate,
+# `workflow_dispatch`, and PRs labelled `perf-bench`.
+#
+# ## CARGO_TARGET_DIR is set deliberately
+#
+# `budget_assertions.rs::criterion_root()` resolves `$CARGO_TARGET_DIR/criterion`.
+# perf-gates.yml records a run where the bench wrote to
+# `crates/lunaris-bench/target/criterion` while the gate step read somewhere
+# else and compared nothing. Pinning it at job level means the bench step and
+# the gate step cannot disagree about where the data is.
+
+name: latency-budgets
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/lunaris-bench/**"
+      - ".github/workflows/latency-budgets.yml"
+      - "Cargo.lock"
+  pull_request:
+    # Opt-in: label the PR `perf-bench`.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: latency-budgets-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  budgets:
+    name: moon latency budgets
+    if: >
+      github.event_name != 'pull_request'
+      || contains(github.event.pull_request.labels.*.name, 'perf-bench')
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      # Both the bench step and the gate step must agree on this path.
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      MOON_URL: moon://127.0.0.1:6390
+      MOON_PORT: "6390"
+      MOON_BINARY: ${{ github.workspace }}/vendor/moon/target/release/moon
+
+    steps:
+      - name: Checkout (vendor/moon only — .planning skipped, cross-repo auth)
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Init vendor/moon submodule
+        # Non-recursive: vendor/moon has its own nested .planning submodule
+        # (SSH-only) that is not needed for builds.
+        run: git submodule update --init vendor/moon
+
+      - name: Install Rust 1.94 toolchain
+        uses: dtolnay/rust-toolchain@1.94
+
+      - name: Capture pinned Moon SHA (for cache key)
+        id: moon-sha
+        run: |
+          SHA=$(git -C vendor/moon rev-parse HEAD)
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Pinned Moon SHA: $SHA"
+
+      - name: Cache cargo registry + target dirs (lunaris + vendor/moon)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            vendor/moon -> vendor/moon/target
+          shared-key: moon-ci-${{ steps.moon-sha.outputs.sha }}
+
+      - name: Build Moon (release, from vendor/moon submodule)
+        run: |
+          cargo build --release \
+            --manifest-path vendor/moon/Cargo.toml \
+            --bin moon
+
+      - name: Launch Moon (port 6390, single shard, fresh data dir)
+        # `--shards 1` is REQUIRED: Lunaris ingest is a single MULTI/EXEC TXN
+        # and a sharded Moon refuses cross-shard writes. The script restarts on
+        # an empty `--dir`, waits on process liveness, and asserts the store is
+        # empty before returning.
+        env:
+          MOON_DATA_DIR: ${{ runner.temp }}/moon-data
+          MOON_LOG: ${{ runner.temp }}/moon.log
+        run: bash scripts/ci/reset_moon.sh
+
+      - name: Run the four budgeted benches
+        # No `reset_moon.sh` between benches, deliberately: `recall_hot_path`
+        # builds a 1M-fact corpus and caches it by fingerprint, and wiping the
+        # store between benches would rebuild it from scratch every time. The
+        # benches write to disjoint scopes.
+        run: |
+          cargo bench -p lunaris-bench \
+            --bench ingest_hot_path \
+            --bench recall_hot_path \
+            --bench atomic_write_hot_path \
+            --bench helios_p50
+
+      - name: Show what Criterion actually wrote
+        # A gate that reads data off disk deserves a visible inventory of that
+        # data — if the bench step silently skipped a backend, this is where it
+        # shows, rather than as a confusing SKIP inside the gate.
+        if: success() || failure()
+        run: |
+          find "$CARGO_TARGET_DIR/criterion" -name estimates.json \
+            | sed "s|$CARGO_TARGET_DIR/criterion/||" | sort
+
+      - name: Enforce the budgets
+        # Fails when any row misses budget, when a row produced no data, or
+        # when NO row produced data. The last case is the one that made this
+        # suite meaningless for its whole life.
+        run: |
+          cargo test -p lunaris-bench --features budget-it \
+            --test budget_assertions -- --nocapture
+
+      - name: Moon log (on failure)
+        if: failure()
+        run: tail -100 "${{ runner.temp }}/moon.log" || true
