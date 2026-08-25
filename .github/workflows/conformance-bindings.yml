@@ -254,7 +254,13 @@ jobs:
       #
       # STRICT so a missing prerequisite FAILS instead of quietly skipping;
       # that is the specific defect the predecessor of this test shipped with.
+      # Same `pull_request` guard as the SDK build steps above and the two
+      # binding suites below: this step needs a BUILT wheel and .node, and
+      # those are push-only. Without the guard, strict mode correctly refused
+      # to skip on a PR where nothing had built them — the guard belongs on
+      # the consumer of a conditional fixture, not on the strictness.
       - name: Rust - cross-SDK embedder parity
+        if: (success() || failure()) && github.event_name != 'pull_request'
         env:
           LUNARIS_CONFORMANCE_STRICT: "1"
         run: |
