@@ -161,9 +161,28 @@ describe("embedder backend visibility", () => {
       const h = await l.open(${JSON.stringify(url)});
       process.stdout.write("TAG=" + h.embedderBackend());
     `;
-    const run = (env: NodeJS.ProcessEnv): string => {
+    // Every route `resolve_default_embedder` can take. The degraded arm has to
+    // close ALL of them: pointing only LUNARIS_EMBEDDER_GGUF at a missing file
+    // leaves the remote routes open, and this job exports
+    // LUNARIS_EMBEDDER_OPENAI_URL at a stub — so the "degraded" arm resolved
+    // `openai-remote`, which is the resolver working correctly and the test
+    // asserting an environment assumption.
+    const EMBEDDER_ROUTES = [
+      "LUNARIS_EMBEDDER_GGUF",
+      "LUNARIS_EMBEDDER_DIR",
+      "LUNARIS_EMBEDDER_OLLAMA_URL",
+      "LUNARIS_EMBEDDER_OPENAI_URL",
+      "LUNARIS_EMBEDDER_OPENAI_API_KEY",
+      "LUNARIS_EMBEDDER_OPENAI_MODEL",
+    ];
+
+    const run = (env: NodeJS.ProcessEnv, closeAllRoutes = false): string => {
       const out = execFileSync(process.execPath, ["--input-type=module", "-e", script], {
-        env: { ...process.env, ...env },
+        env: (() => {
+          const base: NodeJS.ProcessEnv = { ...process.env };
+          if (closeAllRoutes) for (const k of EMBEDDER_ROUTES) delete base[k];
+          return { ...base, ...env };
+        })(),
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
       });
@@ -173,7 +192,10 @@ describe("embedder backend visibility", () => {
     };
 
     const asShipped = run({});
-    const withNoModel = run({ LUNARIS_EMBEDDER_GGUF: "/nonexistent/no-such-model.gguf" });
+    const withNoModel = run(
+      { LUNARIS_EMBEDDER_GGUF: "/nonexistent/no-such-model.gguf" },
+      true,
+    );
 
     expect(KNOWN_TAGS).toContain(asShipped);
     expect(withNoModel).toBe("noop");
@@ -190,7 +212,7 @@ describe("embedder backend visibility", () => {
     }
     expect(
       asShipped,
-      "pointing LUNARIS_EMBEDDER_GGUF at a missing file changed nothing — the " +
+      "closing every embedder route changed nothing — the " +
         "accessor is not reading the resolved backend",
     ).not.toBe(withNoModel);
   });
