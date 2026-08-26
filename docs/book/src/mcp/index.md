@@ -64,7 +64,7 @@ retention tools:
 | `memory.remember` | `kind` (`decision`\|`fix`\|`preference`\|`constraint`), `content`, optional `why`, `tags`, `dedupe_key` | `{ lsn, was_duplicate, source }` |
 | `memory.record_decision` | `decision`, `rationale`, optional `alternatives`, `tags`, `dedupe_key` | `{ lsn, was_duplicate }` |
 | `memory.record_edit` | `path`, `after`, optional `before`, `intent`, `dedupe_key` | `{ lsn, was_duplicate }` |
-| `memory.status` | _(none)_ | backend capability profile + MQ queue-depth probes |
+| `memory.status` | _(none)_ | backend capability profile + MQ queue-depth probes for the three worker topics **and** the never-drained `__lunaris_audit__` |
 | `memory.feedback` | `memory_id`, `sentiment` (±), `reason` (**required**), optional `dedupe_key` | `{ lsn, was_duplicate, activation_applied }` |
 | `memory.verify_agenda` | optional `limit` | `{ count, items[] }` — episodes the staleness sweep flagged (recorded git anchor no longer matches HEAD for files they reference) |
 | `memory.resolve` | `episode_id`, `action` (`keep` \| `invalidate`), optional `reason`, `superseded_by` | `{ status, episode_id, invalidated, agenda_removed }` |

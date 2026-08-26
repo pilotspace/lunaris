@@ -709,7 +709,14 @@ field is stored in metadata — future `memory.recall` queries can filter by pat
 ### `memory.status` (backend + MQ health)
 
 Report the bound scope, backend capability profile, and MQ-backed queue probes
-for `__lunaris_verify__` and `__lunaris_consolidate__`.
+for `__lunaris_embed__`, `__lunaris_verify__`, `__lunaris_consolidate__` and
+`__lunaris_audit__`.
+
+The first three are worker backlogs — a depth that keeps climbing means a
+consumer is stuck. `__lunaris_audit__` is different: nothing drains it (the
+audit reader is deliberately non-destructive) and Moon's MQ has no `TRIM` or
+`MAXLEN`, so its depth is the scope's lifetime mutation count and only ever
+goes up. Watch it for disk, not for backlog.
 
 ```json
 {"name": "memory.status", "arguments": {}}

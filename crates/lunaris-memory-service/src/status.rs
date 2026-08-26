@@ -12,6 +12,32 @@ const VERIFY_QUEUE_TOPIC: &str = "__lunaris_verify__";
 const CONSOLIDATE_QUEUE_TOPIC: &str = "__lunaris_consolidate__";
 const EMBED_QUEUE_TOPIC: &str = "__lunaris_embed__";
 
+/// Every topic `memory.status` reports on.
+///
+/// One list, read by BOTH the live-probe branch and the
+/// no-native-queue branch. It used to be two hand-written lists, so a topic
+/// added to one and not the other would report on Moon and silently vanish
+/// everywhere else.
+/// `__lunaris_audit__` is here for a different reason than the other three,
+/// and the difference is the point (Wave 6 / R2). The embed / verify /
+/// consolidate topics each have a worker that drains them, so their depth is
+/// a *backlog* — high means something is stuck. The audit topic has no
+/// consumer at all: every mutation publishes to it, and its only reader
+/// (`ScopedLunaris::audit_events`) is deliberately non-destructive. Moon's MQ
+/// exposes no `TRIM` and no `MAXLEN` — CREATE / PUSH / POP / ACK / TRIGGER /
+/// PUBLISH / LEN / DLQLEN is the whole surface — so it cannot be bounded from
+/// this side at all. Its depth is not a backlog, it is the scope's total
+/// mutation count, and it only ever goes up.
+///
+/// Bounding it needs a Moon feature. Reporting it does not, and it was the
+/// one topic `memory.status` did not report.
+const PROBED_TOPICS: &[&str] = &[
+    EMBED_QUEUE_TOPIC,
+    VERIFY_QUEUE_TOPIC,
+    CONSOLIDATE_QUEUE_TOPIC,
+    lunaris_core::audit::AUDIT_TOPIC,
+];
+
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct StatusParams {}
 
@@ -43,34 +69,19 @@ pub async fn handle(
 ) -> Result<StatusResponse, ServiceError> {
     let storage = lunaris.storage();
     let caps = storage.capabilities();
-    let queues = if caps.queue_native {
-        vec![
-            queue_status(storage.as_ref(), scope, EMBED_QUEUE_TOPIC).await,
-            queue_status(storage.as_ref(), scope, VERIFY_QUEUE_TOPIC).await,
-            queue_status(storage.as_ref(), scope, CONSOLIDATE_QUEUE_TOPIC).await,
-        ]
-    } else {
-        vec![
+    let mut queues = Vec::with_capacity(PROBED_TOPICS.len());
+    for topic in PROBED_TOPICS {
+        queues.push(if caps.queue_native {
+            queue_status(storage.as_ref(), scope, topic).await
+        } else {
             QueueStatus {
-                topic: EMBED_QUEUE_TOPIC.to_string(),
+                topic: (*topic).to_string(),
                 available: false,
                 depth: None,
                 error: Some("backend does not advertise native queue support".to_string()),
-            },
-            QueueStatus {
-                topic: VERIFY_QUEUE_TOPIC.to_string(),
-                available: false,
-                depth: None,
-                error: Some("backend does not advertise native queue support".to_string()),
-            },
-            QueueStatus {
-                topic: CONSOLIDATE_QUEUE_TOPIC.to_string(),
-                available: false,
-                depth: None,
-                error: Some("backend does not advertise native queue support".to_string()),
-            },
-        ]
-    };
+            }
+        });
+    }
 
     Ok(StatusResponse {
         scope: scope.as_str().to_string(),
@@ -128,7 +139,7 @@ mod tests {
         let response = handle(&engine, &scope, StatusParams {}).await.unwrap();
 
         assert!(response.queue_native, "Moon's queue is native");
-        assert_eq!(response.queues.len(), 3, "one entry per probed topic");
+        assert_eq!(response.queues.len(), PROBED_TOPICS.len(), "one entry per probed topic");
         for queue in &response.queues {
             assert!(
                 queue.available,
@@ -137,5 +148,58 @@ mod tests {
             );
             assert!(queue.error.is_none(), "no error on an available topic");
         }
+    }
+
+    /// Wave 6 / R2 — the audit topic must be among the probed ones.
+    ///
+    /// Nothing in Lunaris consumes `__lunaris_audit__`: every mutation
+    /// publishes to it and the only reader, `ScopedLunaris::audit_events`, is
+    /// explicitly non-destructive (it does not pop, ack, or advance a consumer
+    /// group). Moon's MQ has no `TRIM` and no `MAXLEN` — its subcommands are
+    /// CREATE / PUSH / POP / ACK / TRIGGER / PUBLISH / LEN / DLQLEN — so the
+    /// topic cannot be bounded from this side at all.
+    ///
+    /// It therefore grows for the life of the scope, and until this test it
+    /// was also the ONE topic `memory.status` did not report. The three it did
+    /// probe are each drained by a worker. Bounding the growth needs a Moon
+    /// feature; making it visible does not, and an operator who cannot see a
+    /// number cannot act on it.
+    #[tokio::test]
+    async fn status_probes_the_unbounded_audit_topic() {
+        let engine = open_test_engine().await;
+        let scope = Scope::new("mcp-status-audit").unwrap();
+
+        let response = handle(&engine, &scope, StatusParams {}).await.unwrap();
+
+        let audit = response
+            .queues
+            .iter()
+            .find(|q| q.topic == lunaris_core::audit::AUDIT_TOPIC)
+            .unwrap_or_else(|| {
+                panic!(
+                    "memory.status does not probe `{}` — the only topic nothing drains, \
+                     and the only one that grows without bound. Probed: {:?}",
+                    lunaris_core::audit::AUDIT_TOPIC,
+                    response.queues.iter().map(|q| &q.topic).collect::<Vec<_>>()
+                )
+            });
+        assert!(audit.available, "the audit topic probed as unavailable: {:?}", audit.error);
+        assert!(audit.depth.is_some(), "the audit topic reported no depth");
+    }
+
+    /// The degraded branch must cover the same topics as the live one. It used
+    /// to be a hand-written second list, so a topic added to one and not the
+    /// other would report on Moon and silently vanish on any backend without a
+    /// native queue.
+    #[test]
+    fn every_probed_topic_is_named_once() {
+        let mut seen = PROBED_TOPICS.to_vec();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), PROBED_TOPICS.len(), "a topic is probed twice");
+        assert!(
+            PROBED_TOPICS.contains(&lunaris_core::audit::AUDIT_TOPIC),
+            "PROBED_TOPICS lost the audit topic"
+        );
     }
 }
