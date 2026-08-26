@@ -45,7 +45,7 @@ a package manager at all.
 
 ```sh
 claude mcp add --scope project --transport stdio lunaris \
-  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6380 \
+  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6381 \
   -- lunaris-mcp
 ```
 
@@ -83,7 +83,7 @@ guessed default**; the server resolves a store in three steps:
    then fails every call" is the worst outcome available.
 
 ```bash
-docker run -d --name lunaris-moon -p 6380:6379 \
+docker run -d --name lunaris-moon -p 6381:6379 \
   ghcr.io/pilotspace/moon:0.8.5 \
   --shards 1 --protected-mode no --appendonly yes
 ```

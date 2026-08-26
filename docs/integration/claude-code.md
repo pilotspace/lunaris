@@ -129,8 +129,8 @@ By default the script points Claude Code at Moon:
 
 ```json
 {
-  "LUNARIS_MCP_STORAGE": "moon://127.0.0.1:6380",
-  "LUNARIS_STORE_URL": "moon://127.0.0.1:6380",
+  "LUNARIS_MCP_STORAGE": "moon://127.0.0.1:6381",
+  "LUNARIS_STORE_URL": "moon://127.0.0.1:6381",
   "LUNARIS_GRAPH_ENABLED": "1"
 }
 ```
@@ -162,7 +162,7 @@ Or using the Claude Code CLI:
 
 ```bash
 claude mcp add --transport stdio lunaris \
-  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6380 \
+  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6381 \
   -- npx -y @pilotspace/lunaris-mcp
 ```
 
@@ -192,7 +192,7 @@ Or using the Claude Code CLI:
 
 ```bash
 claude mcp add --transport stdio lunaris \
-  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6380 \
+  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6381 \
   -- uvx lunaris-mcp
 ```
 
@@ -255,7 +255,7 @@ lunaris-mcp --help
 
 ```sh
 claude mcp add --transport stdio lunaris \
-  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6380 \
+  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6381 \
   -- lunaris-mcp
 ```
 
@@ -268,7 +268,7 @@ project scope explicitly:
 
 ```sh
 claude mcp add --scope project --transport stdio lunaris \
-  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6380 \
+  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6381 \
   -- lunaris-mcp
 ```
 
@@ -455,7 +455,7 @@ Or in `.mcp.json`:
       "command": "lunaris-mcp",
       "args": [],
       "env": {
-        "LUNARIS_MCP_STORAGE": "moon://127.0.0.1:6380",
+        "LUNARIS_MCP_STORAGE": "moon://127.0.0.1:6381",
         "LUNARIS_GRAPH_ENABLED": "1"
       }
     }
@@ -463,8 +463,8 @@ Or in `.mcp.json`:
 }
 ```
 
-Moon runs on port 6380 by default
-(`moon --port 6380 --shards 1 --appendonly yes`). `--shards 1` is mandatory —
+Moon runs on port 6381 by default
+(`moon --port 6381 --shards 1 --appendonly yes`). `--shards 1` is mandatory —
 an ingest is one MULTI/EXEC transaction and a sharded Moon rejects it. Moon
 provides native vector search, BM25/hybrid fusion, graph traversal, queues,
 and search-side bi-temporal reads.
@@ -473,7 +473,7 @@ and search-side bi-temporal reads.
 ### Custom storage URL
 
 ```sh
-LUNARIS_MCP_STORAGE=moon://moon.internal:6380 lunaris-mcp
+LUNARIS_MCP_STORAGE=moon://moon.internal:6381 lunaris-mcp
 ```
 
 ### Adjust log verbosity
@@ -502,7 +502,7 @@ models are already present under `~/.lunaris/models/`.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LUNARIS_MCP_SCOPE` | derived from git/cwd | Force a specific scope name |
-| `LUNARIS_MCP_STORAGE` | *(no default)* | Storage URL; setup writes `moon://127.0.0.1:6380`. Unset: falls back to a live store advertised in `~/.lunaris/contextd-moon.url`, else refuses to boot |
+| `LUNARIS_MCP_STORAGE` | *(no default)* | Storage URL; setup writes `moon://127.0.0.1:6381`. Unset: falls back to a live store advertised in `~/.lunaris/contextd-moon.url`, else refuses to boot |
 | `LUNARIS_MOON_DISCOVERY_TIMEOUT_MS` | `25` | Liveness-probe budget for that discovery file (`0` disables discovery) |
 | `LUNARIS_GRAPH_ENABLED` | setup writes `1`; otherwise off | Enable graph extraction/write path for graph retrieval |
 | `LUNARIS_EMBED_CACHE_CAPACITY` | `2048` | Exact-text embedding cache entries per MCP process; set `0` to disable |
@@ -683,12 +683,12 @@ yourself — there is no guessed default:
 
 ```json
 "env": {
-  "LUNARIS_MCP_STORAGE": "moon://127.0.0.1:6380",
+  "LUNARIS_MCP_STORAGE": "moon://127.0.0.1:6381",
   "LUNARIS_GRAPH_ENABLED": "1"
 }
 ```
 
-Start Moon with `moon --port 6380 --shards 1 --appendonly yes`, or run the
+Start Moon with `moon --port 6381 --shards 1 --appendonly yes`, or run the
 `ghcr.io/pilotspace/moon` image with the same flags. Production setup is in
 [`docs/operations/external-moon.md`](../operations/external-moon.md).
 

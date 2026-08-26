@@ -61,6 +61,20 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
   rather than a prometheus metric, because core carries no metrics dependency
   and the drop happens on every surface (MCP, hook, CLI, HTTP), not only the
   one that serves `/metrics`; the server mirrors it in at scrape time.
+- **The agent installer is the headline install (W4.1).** README §1 now leads
+  with `scripts/setup-lunaris-agents.py`, because it is the only path that ends
+  with a store that works: it installs Moon when none is found, starts it,
+  probes it with `FT._LIST`, writes both agent configs and installs the
+  lifecycle hooks. The `claude mcp add` one-liner that used to lead wires the
+  MCP server against a Moon it never creates — followed literally on a clean
+  machine, it produces a server that will not boot. It is still documented,
+  now under a heading that says what it does not do.
+- `scripts/tests/test_docs_name_real_installer_flags.py` — a documented
+  `setup-lunaris-agents.py --flag` must exist in the installer's own
+  `add_argument` calls. Written after this very section claimed
+  "`--uninstall` reverses it"; there is no `--uninstall`. The guard parses the
+  `--no-` forms that `BooleanOptionalAction` creates, so it does not flag them.
+
 - **`lunaris-integrations` is publishable (W4.7).**
   `.github/workflows/integrations-publish.yml` builds the sdist + universal
   wheel on every PR that touches `integrations/`, runs the test suite against
@@ -98,6 +112,22 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
   does nothing. Both names are honoured.
 
 ### Fixed
+
+- **The agent docs wired memory into a port the installer never opens
+  (W4.1).** Every agent-facing doc named `moon://127.0.0.1:6380`, and three
+  stated in a table that "setup writes `moon://127.0.0.1:6380`" — false since
+  the default moved to 6381. The failure is silent from both ends: nothing
+  listens on 6380, or on the reference box an ai-proxy Redis does, answers
+  RESP `PING`, and swallows every write. 38 lines across 10 files corrected,
+  and `scripts/tests/test_agent_store_url_matches_installer.py` now derives the
+  truth from the installer's `DEFAULT_MOON_URL` so it cannot drift again.
+- **A docker block published 6380 and the next block dialled 6381.** The first
+  sweep of the rule above fixed the `LUNARIS_MCP_STORAGE` line in
+  `docs/book/src/mcp/index.md` and `crates/lunaris-mcp/README.md` and left the
+  `docker run -p 6380:6379` above it alone, so both pages told the reader to
+  publish one port and connect to another. The guard now checks the pair: a
+  Moon docker publish inside a file that wires MCP storage must publish the
+  port that storage URL dials.
 
 - **`integrations/pyproject.toml` was never a `bump-version.sh` surface
   (W4.7).** It sat at `0.7.0` through the entire 0.7.1 release while every
@@ -159,8 +189,6 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
   Historical `as_of` pins are unaffected: more than an hour back they are still
   refused with `StorageError::NotSupported` on a backend with no KV version
   chain, which is the same guard the old path hit.
-
-### Fixed
 
 - **A repeated soft `forget` re-stamped rows it had already tombstoned
   (W4.6).** `scan_matches_scoped` filtered on the target predicate alone, with

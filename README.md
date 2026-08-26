@@ -69,7 +69,7 @@ published to crates.io and has no prebuilt release binary yet.
 
 | You are… | Do this | Time |
 |---|---|---|
-| **Giving your AI agent memory** (Claude Code, Codex) | [Install the MCP server](#1-give-your-ai-agent-memory-mcp) — no Rust toolchain needed | 2 min |
+| **Giving your AI agent memory** (Claude Code, Codex) | [Run the agent installer](#recommended-one-script-both-agents-moon-included) — MCP + hooks + Moon, no Rust toolchain needed | 2 min |
 | **Building an app** in Python / TypeScript / Rust | [Install an SDK](#2-build-with-an-sdk) | 5 min |
 | **Just looking** — want to see it recall something | [`lunaris try`](#try-it-without-installing-anything) — needs a clone and a `cargo build` | 3 min |
 | **Evaluating** against Mem0 / Zep / Cognee | Read [`POSITIONING.md`](docs/POSITIONING.md), then the [migration doc](#coming-from-another-agent-memory-tool) for your tool | 10 min |
@@ -91,24 +91,49 @@ curation tools that are the reason to pick Lunaris over a vector store —
 `memory.distill` (write the distilled prose back durably). The roster is
 pinned by `crates/lunaris-mcp/tests/server_boot.rs::server_boots_and_lists_all_tools`,
 which drives the real binary through `tools/list`.
-Both install paths download a prebuilt native binary on first run —
-no Rust toolchain required (`linux-x64/arm64`, `darwin-x64/arm64`,
-`win32-x64`).
+
+### Recommended: one script, both agents, Moon included
+
+```bash
+git clone https://github.com/pilotspace/lunaris && cd lunaris
+scripts/setup-lunaris-agents.py --agent both --runner npx   # or: uvx | local
+```
+
+This is the only install path that ends with a **working** store. It
+installs Moon if none is found, starts it on `moon://127.0.0.1:6381`,
+**probes the endpoint with `FT._LIST` to prove it is really Moon** and not
+some other Redis-speaking service on that port, writes the MCP server entry
+for Claude Code and Codex, and installs the lifecycle hooks that capture and
+inject context automatically. Preview every file it would touch with
+`--dry-run`; check an existing install with `--verify`.
+
+The `FT._LIST` probe is not ceremony. A plain `PING` is answered happily by
+any Redis-compatible process, so a proxy or cache sitting on the port you
+named accepts every write and silently swallows your memory — which is
+exactly what happened on 2026-07-14. Setup refuses to wire a store that
+cannot prove it is Moon.
+
+### Without a clone: MCP only, bring your own Moon
+
+The commands below wire the MCP server and nothing else — **no hooks, and no
+store**. `LUNARIS_MCP_STORAGE` is not optional and Lunaris will not guess a
+value, so you must already have a Moon listening at the URL you pass, or the
+server refuses to boot. Install one with
+[`scripts/install-moon.sh`](scripts/install-moon.sh) first. Both runners
+download a prebuilt native binary on first run — no Rust toolchain required
+(`linux-x64/arm64`, `darwin-x64/arm64`, `win32-x64`).
 
 **Claude Code** — one command, either runner:
 
 ```bash
 claude mcp add --transport stdio lunaris \
-  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6380 \
+  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6381 \
   -- npx -y @pilotspace/lunaris-mcp
 # or
 claude mcp add --transport stdio lunaris \
-  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6380 \
+  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6381 \
   -- uvx lunaris-mcp
 ```
-
-`LUNARIS_MCP_STORAGE` is **not optional** — see below. Without it the server
-refuses to boot, so the shorter form of this command fails on first use.
 
 **Any MCP client** — JSON config:
 
@@ -118,17 +143,10 @@ refuses to boot, so the shorter form of this command fails on first use.
     "lunaris": {
       "command": "npx",
       "args": ["-y", "@pilotspace/lunaris-mcp"],
-      "env": { "LUNARIS_MCP_STORAGE": "moon://127.0.0.1:6380" }
+      "env": { "LUNARIS_MCP_STORAGE": "moon://127.0.0.1:6381" }
     }
   }
 }
-```
-
-**From a repo checkout** (adds lifecycle hooks for automatic capture +
-context injection, Codex included):
-
-```bash
-scripts/setup-lunaris-agents.py --agent both --runner npx   # or: uvx | local
 ```
 
 **Without a package manager** — build from source:
@@ -150,7 +168,9 @@ to each [GitHub release](https://github.com/pilotspace/lunaris/releases).
 per-scope SQLite file; 0.7.0 deleted that backend, and the server now refuses
 to boot rather than guess a store — a mis-routed memory is harder to notice
 than a process that will not start. Point it at a Moon
-(`moon://127.0.0.1:6380`), started with `--shards 1`; install Moon with
+(`moon://127.0.0.1:6381` — the port `scripts/setup-lunaris-agents.py`
+uses, and deliberately not 6380, which is an ai-proxy Redis on some boxes and
+answers RESP `PING` happily), started with `--shards 1`; install Moon with
 `scripts/install-moon.sh` (agent setup runs it for you when no Moon is
 found). A source
 build with `--features embedded-moon` auto-launches an in-process Moon — an
