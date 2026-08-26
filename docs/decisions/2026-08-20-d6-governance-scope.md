@@ -109,7 +109,7 @@ operator can see the gap rather than infer it.
 **D6 v0.7.1 = provenance + a real audit trail + retention + a read path**,
 built in that order, with G1 as a hard prerequisite.
 
-### D6.1 — thread the real scope through the audit path (prerequisite)
+### D6.1 — thread the real scope through the audit path (prerequisite) — **DONE (W4.6)**
 
 Extend `Publisher::publish` to take `&Scope` and forward the caller's real scope
 from its `Lunaris`/`ScopedLunaris` handle. This is the Wave 1E work already
@@ -134,7 +134,7 @@ a test proves two scopes' audit events do not intermingle.
 surface that can be driven from a shell makes "did provenance record the right
 writer?" a shell-testable assertion rather than an MCP-session ritual.
 
-### D6.3 — audit trail that can be read
+### D6.3 — audit trail that can be read — **DONE (W4.6)**
 
 - Publish per-scope (D6.1), not to a single shared partition 0.
 - Add the **consumer**: a query path over `__lunaris_audit__` filtered by scope
@@ -147,7 +147,7 @@ writer?" a shell-testable assertion rather than an MCP-session ritual.
 `WriteOp` vector. A second `atomic_write` in `lunaris-ingest/src/pipeline.rs`
 breaks the one-atomic-write-per-ingest invariant and its CI grep guard.
 
-### D6.4 — retention
+### D6.4 — retention — **DONE (W4.6)**
 
 Per-scope retention policy with enforcement. Two known interactions, recorded so
 they are not rediscovered mid-build:
@@ -157,6 +157,13 @@ they are not rediscovered mid-build:
 - **The `matched` over-count on soft-deleted records** is a known open
   follow-up. Retention enforcement will surface it, so fix or explicitly scope
   it out at that point.
+
+  **It surfaced, and it was worse than a count (W4.6).** `scan_matches_scoped`
+  filtered on the target predicate with no check for already-sys-closed rows,
+  so a scheduled sweep re-stamped every row it had ever swept, every pass,
+  forever — unbounded write growth on any scope with a policy, not a reporting
+  bug. Fixed on the soft path only; a hard forget must still delete a
+  tombstoned row.
 
 ### D6.5 — read API on the shared dispatch
 

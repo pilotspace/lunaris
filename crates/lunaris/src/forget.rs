@@ -293,8 +293,12 @@ impl Lunaris {
 
             // B-4: scan_matches takes &HlcClock so it can call clock.tick() to
             // stamp the as_of for the OPS-01 single-target read_as_of path.
-            let matches =
+            let mut matches =
                 scan_matches(self.storage.as_ref(), &request.target, self.clock.as_ref()).await?;
+            // Same fix as the scoped path below. Deprecated or not, re-stamping
+            // an already-tombstoned row is a write that changes nothing and a
+            // `matched` that overstates what happened.
+            drop_already_closed(&mut matches, request.options.hard);
 
             if request.options.dry_run {
                 // Dry-run: no atomic_write. Receipt carries preview=true.
@@ -636,7 +640,9 @@ pub(crate) async fn forget_scoped(
             )));
         }
 
-        let matches = scan_matches_scoped(storage.as_ref(), scope, &request.target, clock).await?;
+        let mut matches =
+            scan_matches_scoped(storage.as_ref(), scope, &request.target, clock).await?;
+        drop_already_closed(&mut matches, request.options.hard);
         // W1.4: `matches` now holds chunk rows too. `matched` stays a count of
         // EPISODES so the preview keeps meaning what its docs say.
         let matched = episode_match_count(&matches, scope);
@@ -762,6 +768,46 @@ async fn scan_episode_matches_scoped(
         }
     }
     Ok(out)
+}
+
+/// Whether a row is already sys-closed — soft-deleted by an earlier forget,
+/// or superseded by the verifier.
+///
+/// Read from the payload, not from `ForgetMatch::bt`: `build_soft_delete_op`
+/// stamps `bt.sys[1]` INTO the payload JSON (the backends derive `bt` from
+/// those bytes), so the payload is the authority and is what a re-scan reads
+/// back.
+fn is_sys_closed(payload: &[u8]) -> bool {
+    serde_json::from_slice::<serde_json::Value>(payload)
+        .ok()
+        .and_then(|v| {
+            v.get("bt")
+                .and_then(|bt| bt.get("sys"))
+                .and_then(|sys| sys.as_array())
+                .and_then(|a| a.get(1))
+                .map(|to| !to.is_null())
+        })
+        .unwrap_or(false)
+}
+
+/// Drop rows a SOFT forget has nothing to do to.
+///
+/// W4.6 / D6.4. `scan_matches_scoped` filters on the target predicate alone,
+/// with no check for rows already sys-closed. For a one-shot `forget` that
+/// showed up only as an inflated `matched` on a repeat call — the "`matched`
+/// over-count on soft-deleted records" the D6 decision recorded as an open
+/// follow-up. Retention is what makes it matter: a policy sweep runs on a
+/// schedule, so every pass re-stamped every row it had ever swept, and the
+/// scope's write volume grew without bound while `rows_written` reported work
+/// that changed nothing.
+///
+/// Soft only. A HARD forget must still be able to delete a tombstoned row —
+/// the row and its content are still there, and "already hidden" is not
+/// "already gone".
+fn drop_already_closed(matches: &mut Vec<ForgetMatch>, hard: bool) {
+    if !hard {
+        matches.retain(|m| !is_sys_closed(&m.payload));
+    }
 }
 
 /// How many EPISODES a scan matched, as opposed to how many rows it will touch.

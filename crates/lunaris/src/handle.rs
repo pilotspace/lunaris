@@ -1274,6 +1274,47 @@ impl<'a> ScopedLunaris<'a> {
         self.engine.recall().with_scope(self.scope.clone()).execute(query).await
     }
 
+    /// Set this scope's retention policy (W4.6 / D6.4).
+    ///
+    /// Retention is **opt-in per scope**: a scope with no policy is never
+    /// swept. The failure mode of an accidental policy is unrecoverable data
+    /// loss and the failure mode of an accidentally-absent one is disk, so the
+    /// default is the recoverable one.
+    pub async fn set_retention_policy(
+        &self,
+        policy: lunaris_core::retention::RetentionPolicy,
+    ) -> Result<(), LunarisError> {
+        crate::retention::write_policy(&self.engine.storage, &self.scope, policy).await
+    }
+
+    /// Read this scope's retention policy, or `None` when it has none.
+    pub async fn retention_policy(
+        &self,
+    ) -> Result<Option<lunaris_core::retention::RetentionPolicy>, LunarisError> {
+        crate::retention::read_policy(&self.engine.storage, &self.scope, &self.engine.clock).await
+    }
+
+    /// Run one retention pass over this scope, against the current wall clock.
+    ///
+    /// A no-op returning `policy: None` when the scope has no policy. See
+    /// [`crate::retention`] for why a sweep goes through `forget` rather than
+    /// deleting directly, and why Lunaris does not schedule this for you.
+    pub async fn enforce_retention(
+        &self,
+    ) -> Result<crate::retention::RetentionReceipt, LunarisError> {
+        let now_ms = self.engine.clock.tick().wall_ms;
+        crate::retention::enforce_at(self.engine, &self.scope, now_ms).await
+    }
+
+    /// [`Self::enforce_retention`] against a caller-chosen wall clock, so a
+    /// backfill or a replay can pin the cutoff instead of racing it.
+    pub async fn enforce_retention_at(
+        &self,
+        now_ms: u64,
+    ) -> Result<crate::retention::RetentionReceipt, LunarisError> {
+        crate::retention::enforce_at(self.engine, &self.scope, now_ms).await
+    }
+
     /// Read this scope's audit trail over a closed time range.
     ///
     /// W4.6 / D6.3. Until now the audit log was write-only: every producer
