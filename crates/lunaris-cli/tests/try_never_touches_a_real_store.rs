@@ -99,14 +99,43 @@ fn the_trial_url_comes_from_the_embedded_launcher() {
 /// mistake available here. `--fresh` deletes a directory instead.
 #[test]
 fn the_trial_never_flushes_a_database() {
-    for file in ["trial.rs", "direct.rs", "stage.rs", "corpus.rs"] {
-        let body = src(file);
+    // Every source file in the crate, not a hand-listed four. The list used to
+    // name `stage.rs`, which W0.7 deleted when the model stager moved into
+    // `lunaris-core` — and a list that has to be edited when a file is added
+    // is a list that stops covering the module somebody writes next.
+    let mut scanned = 0usize;
+    for path in crate_sources() {
+        let body = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        scanned += 1;
         assert!(
             !code_lines(&body).any(|(_, l)| l.contains("FLUSHALL") || l.contains("flushall")),
-            "{file} issues FLUSHALL. `--fresh` must delete the trial's own data \
-             directory; clearing a database can hit one this command did not create."
+            "{} issues FLUSHALL. `--fresh` must delete the trial's own data \
+             directory; clearing a database can hit one this command did not create.",
+            path.display()
         );
     }
+    // Instrument self-check: a walk that found nothing passes this test for
+    // the wrong reason, and reads identically to a clean crate.
+    assert!(scanned >= 4, "the source walk found only {scanned} files — the walk is broken");
+}
+
+/// Every `.rs` file under `crates/lunaris-cli/src/`, recursively.
+fn crate_sources() -> Vec<PathBuf> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                out.push(p);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src"), &mut out);
+    out
 }
 
 // ── Behavioural proof ────────────────────────────────────────────────────────

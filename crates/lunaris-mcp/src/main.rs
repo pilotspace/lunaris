@@ -22,7 +22,6 @@ mod scope_resolver;
 // Lazy GGUF model stager — Wave 1.B.
 // NEVER called at server start: first call comes from the memory.recall handler
 // (Wave 2.B). Cold-start budget gate (Wave 3.2) asserts tools/list < 500 ms.
-mod model_stager;
 mod state;
 // In-process Moon server lifecycle — all items cfg(feature="embedded-moon").
 // Compiled to nothing on the default (no feature) build.

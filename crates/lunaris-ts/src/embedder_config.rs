@@ -145,16 +145,14 @@ pub struct NativeQuantizedConfigOpts {
 /// umbrella resolver and the `stage-models` tool.
 #[cfg(feature = "llamacpp")]
 pub(crate) fn lunaris_models_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".lunaris")
-        .join("models")
+    // W0.7 — the ONE resolution, shared with the engine and the stager, so an
+    // SDK default and the file `Lunaris::open` opens cannot be different files.
+    lunaris_core::models::models_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
 #[cfg(feature = "llamacpp")]
 fn default_embedder_gguf() -> PathBuf {
-    lunaris_models_dir().join("granite-embedding-311m-multilingual-r2.Q4_K_M.gguf")
+    lunaris_models_dir().join(lunaris_core::models::ModelKind::EmbedderGraniteQ4KM.filename())
 }
 
 #[cfg(test)]
@@ -184,7 +182,10 @@ mod tests {
     fn default_embedder_gguf_ends_with_staged_name() {
         let p = default_embedder_gguf();
         assert!(
-            p.ends_with(".lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf"),
+            p.ends_with(
+                std::path::Path::new(".lunaris/models")
+                    .join(lunaris_core::models::ModelKind::EmbedderGraniteQ4KM.filename())
+            ),
             "got {}",
             p.display()
         );

@@ -25,15 +25,15 @@ use std::path::PathBuf;
 /// variable at a nonexistent file reports a model that is not there — the
 /// caller then proceeds as if it had an embedder.
 pub fn embedder_gguf() -> Option<PathBuf> {
-    if let Some(p) = std::env::var_os("LUNARIS_EMBEDDER_GGUF").map(PathBuf::from) {
+    // W0.7 — the env var name, the filename and the directory all come from
+    // the ONE catalogue the engine resolves through, so "is a model staged?"
+    // and "which file will `Lunaris::open` actually load?" cannot answer
+    // about different files.
+    let kind = lunaris_core::models::ModelKind::EmbedderGraniteQ4KM;
+    if let Some(p) = std::env::var_os(kind.env_override()).map(PathBuf::from) {
         return p.exists().then_some(p);
     }
-    std::env::var_os("HOME")
-        .map(|h| {
-            PathBuf::from(h)
-                .join(".lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf")
-        })
-        .filter(|p| p.exists())
+    lunaris_core::models::staged_path(kind).filter(|p| p.exists())
 }
 
 /// Can this environment produce real embeddings?

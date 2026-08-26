@@ -22,7 +22,6 @@ mod direct;
 mod render;
 mod request;
 mod route;
-mod stage;
 mod trial;
 
 use std::process::ExitCode;
@@ -86,9 +85,7 @@ fn socket_path() -> Option<std::path::PathBuf> {
     if let Some(p) = std::env::var_os(lunaris_memory_service::protocol::CONTEXTD_SOCKET_ENV) {
         return Some(std::path::PathBuf::from(p));
     }
-    std::env::var_os("HOME")
-        .map(std::path::PathBuf::from)
-        .map(|h| h.join(".lunaris").join("codex-contextd.sock"))
+    lunaris_core::models::home_dir().map(|h| h.join(".lunaris").join("codex-contextd.sock"))
 }
 
 /// Logs go to stderr so stdout stays a clean, pipeable payload. Quiet by

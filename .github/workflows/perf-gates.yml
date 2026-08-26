@@ -16,9 +16,11 @@
 #     is vacuously green by design — the bench still runs, catching crashes.
 #
 # GGUF staging: downloads the canonical artifacts and verifies the pinned
-# SHA-256s. URLs + digests MUST stay in sync with
-# crates/lunaris-mcp/src/model_stager.rs (ModelKind::url / ::sha256) — a
-# digest mismatch is an integrity failure, not a flake.
+# SHA-256s. URLs + digests come from crates/lunaris-core/src/models.rs
+# (ModelKind::url / ::sha256) and are ENFORCED equal to it by
+# crates/lunaris-core/tests/model_catalogue.rs — editing one here without the
+# catalogue fails that test. A digest mismatch at download time is an
+# integrity failure, not a flake.
 
 name: perf-gates
 
@@ -63,7 +65,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      # Keep in sync with crates/lunaris-mcp/src/model_stager.rs.
+      # Enforced equal to crates/lunaris-core/src/models.rs by
+      # crates/lunaris-core/tests/model_catalogue.rs.
       EMBEDDER_GGUF_URL: https://huggingface.co/mykor/granite-embedding-311m-multilingual-r2-GGUF/resolve/main/granite-embedding-311M-multilingual-r2-Q4_K_M.gguf
       EMBEDDER_GGUF_SHA256: 58d27f63e69ccf7abce27bf6b35bb0edebc3a1c05ad4a3165acaba1cdca107c0
       RERANKER_GGUF_URL: https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/resolve/main/bge-reranker-v2-m3-Q5_K_M.gguf

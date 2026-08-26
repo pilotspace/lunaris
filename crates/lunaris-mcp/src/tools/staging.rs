@@ -11,8 +11,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use tokio::sync::OnceCell;
 
-use crate::model_stager::{ModelKind, StageError, ensure_staged};
 use crate::tools::ToolError;
+use lunaris_core::model_staging::{StageError, ensure_model};
+use lunaris_core::models::ModelKind;
 
 // ── Lazy stager ───────────────────────────────────────────────────────────────
 
@@ -54,7 +55,15 @@ pub(crate) async fn maybe_ensure_staged() -> Result<(), ToolError> {
             STAGE_LOG_ONCE.get_or_init(|| {
                 eprintln!("lunaris-mcp: staging models — first run only");
             });
-            ensure_staged(ModelKind::EmbedderGraniteQ4KM).await.map(|_| ()).map_err(
+            // W0.7 — `ensure_model` (not the older `ensure_staged`) honours
+            // LUNARIS_EMBEDDER_GGUF. The previous call ignored it, so an
+            // operator with their own weights paid a 253 MB download the
+            // engine then never opened, and a MIS-typed override downloaded
+            // the default while the engine warned and fell through to the
+            // no-op embedder — silently empty recalls, the worst shape this
+            // failure can take. Now: an override that resolves is used as-is,
+            // and one that does not is an error that says so.
+            ensure_model(ModelKind::EmbedderGraniteQ4KM).await.map(|_| ()).map_err(
                 |e: StageError| ToolError::InvalidInput(format!("model staging failed: {e}")),
             )
         })

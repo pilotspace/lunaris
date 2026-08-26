@@ -528,8 +528,9 @@ jobs:
   #      now or is added later without touching a line of Rust.
   #
   # Runner cost: a separate job so a cold GGUF download never blocks `check`,
-  # and so the two run in parallel. GGUF URLs / SHAs are kept identical to
-  # perf-gates.yml and crates/lunaris-mcp/src/model_stager.rs.
+  # and so the two run in parallel. GGUF URLs / SHAs are held identical to
+  # crates/lunaris-core/src/models.rs by
+  # crates/lunaris-core/tests/model_catalogue.rs.
   #
   # Security: no `github.event.*` reaches any run: block; the two URLs are
   # static literals passed through env:.

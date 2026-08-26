@@ -61,7 +61,40 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
   rather than a prometheus metric, because core carries no metrics dependency
   and the drop happens on every surface (MCP, hook, CLI, HTTP), not only the
   one that serves `/metrics`; the server mirrors it in at scrape time.
+- **`lunaris_core::models` — one catalogue naming the GGUF artifacts (W0.7).**
+  `ModelKind::{filename, url, sha256, size_mb, display_name, env_override}`
+  plus `models_dir()` / `staged_path()`, compiled unconditionally and carrying
+  no new dependencies, so any crate can name a model without being able to
+  download one.
+- **`lunaris_core::model_staging` — the downloader, behind the new,
+  default-off `model-staging` feature.** `ensure_model` (honours the operator
+  override), `ensure_staged`, and `ensure_staged_with` (injectable base URL +
+  digest, for tests). Enabled by `lunaris-mcp` and `lunaris-cli`; off
+  everywhere else, so nothing else pulls reqwest + TLS + a progress bar.
+- `LUNARIS_MODELS_DIR` relocates the staged-model directory, and — unlike its
+  predecessor `LUNARIS_MCP_MODELS_DIR`, which only the MCP stager read — it now
+  moves the staging target **and** the engine's own lookup together. Setting
+  the old variable used to download into a directory `Lunaris::open` did not
+  consult, which reads exactly like a successful download of a model that then
+  does nothing. Both names are honoured.
+
 ### Fixed
+
+- **The MCP server ignored `LUNARIS_EMBEDDER_GGUF` when staging (W0.7).**
+  `maybe_ensure_staged` called a stager that downloads unconditionally, so an
+  operator with their own weights paid a 253 MB download the engine then never
+  opened — and one who mis-typed the path got the default downloaded while the
+  engine warned and fell through to the no-op embedder, producing silently
+  empty recalls. Both callers now use `ensure_model`: an override that resolves
+  is used untouched, and one that does not is an error naming the variable and
+  the path.
+- **The MCP stager and the engine could resolve different home directories
+  (W0.7).** The stager used `dirs::home_dir()`; `Lunaris::open` reads the
+  `HOME` environment variable. Where those disagree — `sudo`, `launchd`, a
+  container — the server staged 253 MB into a directory the engine does not
+  consult, which reads exactly like a successful download. Both now call
+  `lunaris_core::models::models_dir()`, which reads `$HOME` first and falls
+  back to `dirs`.
 
 - **The scratchpad's time-travel read returned rewritten, stale, or no content
   (F42).** `AsOfScratchpad::read` — and the multi-chunk fallback in
@@ -143,6 +176,15 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
 
   This is the hard prerequisite for the D6 governance work: a read API over a
   dev-scoped stream would have served one tenant another tenant's history.
+- **The GGUF stager exists once (W0.7).** `lunaris-mcp/src/model_stager.rs`
+  and `lunaris-cli/src/stage.rs` were two full implementations of the same
+  download-verify-rename, pinned to each other by a test that read both source
+  files. Both are deleted, along with that test; the implementation lives in
+  `lunaris_core::model_staging`. `crates/lunaris-core/tests/model_catalogue.rs`
+  now requires that exactly one source file in the workspace names each pinned
+  digest, and that every `*_GGUF_URL` / `*_GGUF_SHA256` literal in
+  `.github/workflows/` equals the catalogue's — the digest had drifted into
+  five places under "keep in sync" comments.
 
 - **Recall ranking on the MCP / hook / CLI path shifts toward previously-used
   memories (F43).** The ACT-R activation prior was **inert**: `boost_prior`

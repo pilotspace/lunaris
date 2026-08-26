@@ -66,6 +66,12 @@ use lunaris_memory_service::protocol::MemoryRequest;
 use crate::corpus::{DEFAULT_QUERY, SAMPLES};
 use crate::request::TryArgs;
 use crate::route::Route;
+use lunaris_core::model_staging::Staged;
+use lunaris_core::models::ModelKind;
+
+/// The trial embeds with the catalogue embedder; naming it once here keeps
+/// the staging call and the engine's own lookup on the same artifact.
+const EMBEDDER_MODEL: ModelKind = ModelKind::EmbedderGraniteQ4KM;
 
 /// The scope the trial writes into. Fixed, and deliberately not `--scope`-able:
 /// a first-run command that can be pointed at an arbitrary partition is a
@@ -286,9 +292,10 @@ fn trial_dir() -> anyhow::Result<PathBuf> {
     {
         return Ok(dir);
     }
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .or_else(dirs::home_dir)
+    // The ONE home-directory rule (W0.7): `$HOME` first, `dirs` as fallback.
+    // Resolving it differently from the engine is how a first-run command
+    // writes somewhere `Lunaris::open` never looks.
+    let home = lunaris_core::models::home_dir()
         .context("cannot resolve $HOME; set LUNARIS_TRY_DIR to choose where the trial lives")?;
     Ok(home.join(".lunaris").join("try"))
 }
@@ -328,11 +335,20 @@ impl EmbedderChoice {
 async fn resolve_embedder() -> anyhow::Result<EmbedderChoice> {
     match std::env::var("LUNARIS_TRY_EMBEDDER").unwrap_or_default().trim() {
         "" | "granite" => {
-            let (path, how) = crate::stage::ensure_embedder().await?;
+            // W0.7 — ONE stager, in lunaris-core. `lunaris try` and the MCP
+            // server now fetch the same bytes by construction, not by a test
+            // that reads two source files and hopes they still agree.
+            let (path, how) = lunaris_core::model_staging::ensure_model(EMBEDDER_MODEL).await?;
             let note = match how {
-                crate::stage::Staged::OperatorSupplied => "from LUNARIS_EMBEDDER_GGUF",
-                crate::stage::Staged::AlreadyPresent => "already staged",
-                crate::stage::Staged::Downloaded => "downloaded just now",
+                Staged::OperatorSupplied => "from LUNARIS_EMBEDDER_GGUF",
+                Staged::AlreadyPresent => "already staged",
+                Staged::Downloaded => "downloaded just now",
+                other => {
+                    // `Staged` is #[non_exhaustive]; a new variant must be
+                    // named here rather than silently reported as a download.
+                    tracing::warn!(?other, "unrecognised staging outcome");
+                    "staged"
+                }
             };
             let name =
                 path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();

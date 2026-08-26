@@ -33,8 +33,28 @@ smol_str       = { workspace = true }
 blake3         = { workspace = true }
 dirs           = { workspace = true }
 
+# ── W0.7 — `model-staging` only ──────────────────────────────────────────────
+# The GGUF downloader. Optional and OFF by default: the catalogue in
+# `models.rs` (which model, which digest, which path) costs nothing and every
+# crate can name a model; only `lunaris-mcp` and `lunaris-cli` need to fetch
+# one, and neither SDK nor any storage backend should pull HTTP + TLS + a
+# progress bar to compile.
+reqwest      = { workspace = true, features = ["stream"], optional = true }
+sha2         = { workspace = true, optional = true }
+futures-util = { version = "0.3", optional = true }
+# indicatif — progress on STDERR. A silent 253 MB download reads as a hang,
+# which is the worst thing a first-run command can do.
+indicatif    = { version = "0.17", optional = true }
+
+[features]
+default = []
+# Download + SHA-256 verify the models named in `lunaris_core::models`.
+model-staging = ["dep:reqwest", "dep:sha2", "dep:futures-util", "dep:indicatif"]
+
 [dev-dependencies]
 rand           = { workspace = true }
 proptest       = { workspace = true }
 tokio          = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tempfile       = "3"
+# W0.7 — mock HTTP for the stager tests; no real network in CI.
+wiremock       = "0.6"
