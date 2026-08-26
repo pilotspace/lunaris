@@ -38,8 +38,13 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
     regression.
   - HTTP `/v1/recall` and the Rust/Python/TypeScript SDKs are **unaffected** —
     they never applied the prior (tracked as W1.8).
-  - `LUNARIS_ACTIVATION_BOOST=0` restores the pre-fix ordering exactly, and
-    remains the supported opt-out.
+  - `LUNARIS_ACTIVATION_BOOST=0` remains the supported opt-out and is itself
+    unchanged: it removes the boost provider entirely, so no prior is applied
+    at all. Note it is **not** a rollback to the previous *on* behaviour — the
+    old curve still contributed a small boost inside its cliff window (~0.118
+    for a memory referenced ten times, ten seconds ago). Setting it to `0`
+    matches the old ordering everywhere EXCEPT for memories referenced in the
+    last seconds-to-minutes, where the old code did rank them up.
 
   **No published benchmark number changes.** `lunaris-bench` never calls
   `record_activation_refs`, so every gauntlet run reads an empty ledger and
