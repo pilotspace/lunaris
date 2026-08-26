@@ -5,6 +5,55 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
 
 ## [Unreleased]
 
+### Changed
+
+- **Recall ranking on the MCP / hook / CLI path shifts toward previously-used
+  memories (F43).** The ACT-R activation prior was **inert**: `boost_prior`
+  clamped negative activation to zero, and because activation is
+  `ln(weighted * elapsed^-decay)` with `elapsed` in **seconds**, it read
+  exactly `0.0` for any memory older than `weighted²` seconds — 9 seconds
+  after one strong reference, 15 minutes after ten. `BOOST_CAP` (0.30) needed
+  a weighted sum of 1.944e8 and was never approached.
+
+  Replaced with `BOOST_CAP * logistic((activation - BOOST_MIDPOINT) /
+  BOOST_SCALE)`, which is monotone over the whole ACT-R range. For a memory
+  referenced ten times, the prior added to a fused score becomes:
+
+  | age  | 10s | 1min | 10min | 1h | 6h | 1 day | 7 days |
+  |---|---|---|---|---|---|---|---|
+  | before | 0.118 | 0.086 | 0.019 | **0.0** | **0.0** | **0.0** | **0.0** |
+  | after  | 0.204 | 0.183 | 0.155 | 0.133 | 0.111 | 0.096 | 0.076 |
+
+  **What operators need to know.** No data migration: `ActivationRecord` is
+  unchanged on disk, and no reindex is required. Existing ledger rows keep
+  their contents — only their *effect* changes, from approximately nothing to
+  a real rank prior. Concretely, after upgrading:
+
+  - `memory.recall` (MCP), contextd, the Claude Code hook and `lunaris-cli`
+    will order results differently, favouring memories that have been
+    referenced before. This is the documented intent of the feature; it is
+    the first release in which it actually happens.
+  - **Any saved recall baseline or ordering snapshot taken on that path needs
+    re-taking.** A diff against an older baseline is expected, not a
+    regression.
+  - HTTP `/v1/recall` and the Rust/Python/TypeScript SDKs are **unaffected** —
+    they never applied the prior (tracked as W1.8).
+  - `LUNARIS_ACTIVATION_BOOST=0` restores the pre-fix ordering exactly, and
+    remains the supported opt-out.
+
+  **No published benchmark number changes.** `lunaris-bench` never calls
+  `record_activation_refs`, so every gauntlet run reads an empty ledger and
+  every prior is `0.0` both before and after.
+
+  `lunaris_core::activation::BOOST_K` is `#[deprecated]` (kept, not removed,
+  so the public surface does not shrink); `BOOST_MIDPOINT` and `BOOST_SCALE`
+  replace it, with `BOOST_SCALE` as the tuning dial. See
+  `docs/book/src/reference/configuration.md` for the full curve.
+
+  *At release: this entry needs a corresponding note in the version's
+  `docs/migration/` guide — it changes observable ordering for existing
+  deployments.*
+
 ## [0.7.1] — 2026-08-25
 
 ### Added
