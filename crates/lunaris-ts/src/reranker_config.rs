@@ -123,5 +123,6 @@ pub struct NativeQuantizedRerankerConfigOpts {
 
 #[cfg(feature = "llamacpp")]
 fn default_reranker_gguf() -> PathBuf {
-    crate::embedder_config::lunaris_models_dir().join("bge-reranker-v2-m3.Q5_K_M.gguf")
+    crate::embedder_config::lunaris_models_dir()
+        .join(lunaris_core::models::ModelKind::RerankerBgeV2M3Q5KM.filename())
 }

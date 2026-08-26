@@ -42,7 +42,7 @@ path = "src/main.rs"
 # do it, so a plain `cargo build -p lunaris-cli` cannot silently produce the
 # Tier-0 NoopEmbedder build (the trap that bites lunaris-server).
 lunaris      = { workspace = true, features = ["llamacpp"] }
-lunaris-core = { workspace = true }
+lunaris-core = { workspace = true, features = ["model-staging"] }
 # THE shared command surface. Every subcommand builds a `MemoryRequest` and
 # hands it to `protocol::dispatch` — the identical function contextd runs and
 # the mcp proxy falls back to. The CLI must never open storage or plan a recall
@@ -61,20 +61,11 @@ tracing-subscriber = { workspace = true }
 
 # ── `lunaris try` — zero-config trial path (W0.4) ─────────────────────────────
 # Model staging for the trial: the front door cannot ask a stranger to fetch a
-# 253 MB GGUF by hand. This is the SECOND copy of the staging logic in the
-# workspace (the first is `lunaris-mcp/src/model_stager.rs`, which is
-# `pub(crate)` and therefore unreachable from here). W0.7 promotes ONE copy into
-# `lunaris-core`; when it lands, `src/stage.rs` deletes and this dep block goes
-# with it. `crates/lunaris-cli/tests/stage_contract.rs` pins the two copies to
-# the same URL + SHA-256 so they cannot drift in the meantime.
-reqwest      = { workspace = true, features = ["stream"] }
-sha2         = { workspace = true }
-futures-util = "0.3"
-# indicatif 0.17 — progress on STDERR. A silent 253 MB download reads as a hang,
-# which is the single worst thing a first-run command can do. Same version as
-# lunaris-mcp; not a workspace dep because only these two crates draw bars.
-indicatif    = "0.17"
-dirs         = { workspace = true }
+# 253 MB GGUF by hand. W0.7 landed, so this is no longer a second copy of
+# `lunaris-mcp/src/model_stager.rs` — both callers now go through
+# `lunaris_core::model_staging` (feature enabled on the lunaris-core entry
+# above), and the reqwest / sha2 / futures-util / indicatif deps went with the
+# duplicated implementation.
 
 [features]
 default = []

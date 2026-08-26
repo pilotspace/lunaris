@@ -432,7 +432,8 @@ resolution is explicit → contextd-advertised → refuse-to-boot; see
 |---|---|---|
 | `LUNARIS_MCP_STORAGE` | unset (**no default since 0.7.0**) | Storage URL (`moon://host:port`). Unset → adopt a live `lunaris-contextd`-advertised store, else refuse to boot with the external-Moon quickstart. Must match contextd's store or the two write to different Moons. |
 | `LUNARIS_MCP_SCOPE` | unset | Overrides the auto-derived memory scope (git remote + branch, else cwd hash) |
-| `LUNARIS_MCP_MODELS_DIR` | `~/.lunaris/models` | Where lazy GGUF staging puts model files (mostly test isolation) |
+| `LUNARIS_MODELS_DIR` | `~/.lunaris/models` | Where staged GGUFs live. Moves the staging target **and** the engine's lookup together. To use one specific file rather than a different directory, set `LUNARIS_EMBEDDER_GGUF` instead. |
+| `LUNARIS_MCP_MODELS_DIR` | — | Predecessor of `LUNARIS_MODELS_DIR`; still honoured. Before v0.7.2 only the MCP stager read it, so setting it staged into a directory the engine did not consult. |
 | `LUNARIS_MCP_SKIP_STAGE` | unset | Presence-only: skip lazy GGUF staging on first recall (CI / operator override) |
 | `LUNARIS_MCP_DISABLE_CONTEXTD` | unset | Presence-only: serve every op Direct instead of proxying to the warm `lunaris-contextd` daemon |
 | `LUNARIS_MCP_CONTEXTD_CONNECT_MS` | `500` | Cold-start budget for connecting to contextd's socket before falling back to Direct |

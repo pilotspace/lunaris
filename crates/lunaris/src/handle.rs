@@ -2307,7 +2307,8 @@ async fn resolve_embedder(max_batch_tokens: u32) -> Result<Arc<dyn Embedder>, Lu
     //    remote/Noop chain.
     #[cfg(feature = "llamacpp")]
     {
-        if let Some(gguf_path) = llamacpp_gguf_path(EMBEDDER_GGUF_ENV_VAR, LLAMACPP_EMBEDDER_GGUF) {
+        if let Some(gguf_path) = llamacpp_gguf_path(EMBEDDER_GGUF_ENV_VAR, LLAMACPP_EMBEDDER_MODEL)
+        {
             let opts = lunaris_llamacpp::LlamaCppEmbedderOpts {
                 gguf_path: gguf_path.clone(),
                 n_gpu_layers: llamacpp_gpu_layers(),
@@ -2576,7 +2577,8 @@ async fn resolve_reranker() -> Result<Arc<dyn Reranker>, LunarisError> {
     //    path still falls through to Noop immediately.
     #[cfg(feature = "llamacpp")]
     {
-        if let Some(gguf_path) = llamacpp_gguf_path(RERANKER_GGUF_ENV_VAR, LLAMACPP_RERANKER_GGUF) {
+        if let Some(gguf_path) = llamacpp_gguf_path(RERANKER_GGUF_ENV_VAR, LLAMACPP_RERANKER_MODEL)
+        {
             let lazy = LazyLlamaCppReranker::new(lunaris_llamacpp::LlamaCppRerankerOpts {
                 gguf_path: gguf_path.clone(),
                 n_gpu_layers: llamacpp_gpu_layers(),
@@ -2736,18 +2738,28 @@ fn default_consolidator() -> Result<Arc<dyn Consolidator>, LunarisError> {
 
 // ── llama.cpp cutover Phase B — path resolution + lazy reranker ─────────────
 
-/// Staged-artifact default filenames under `~/.lunaris/models/` — the same
-/// layout `lunaris-llamacpp`'s own smoke tests use.
+/// The staged artifacts under `~/.lunaris/models/`, named by the ONE catalogue
+/// every stager reads.
+///
+/// W0.7: the filenames used to be literals here and again in each of the two
+/// stagers. Staging 253 MB under a name this lookup does not consult is a
+/// silent no-op that presents as success, so the agreement is now structural
+/// — there is a single `filename()`, and both sides call it.
 #[cfg(feature = "llamacpp")]
-const LLAMACPP_EMBEDDER_GGUF: &str = "granite-embedding-311m-multilingual-r2.Q4_K_M.gguf";
+const LLAMACPP_EMBEDDER_MODEL: lunaris_core::models::ModelKind =
+    lunaris_core::models::ModelKind::EmbedderGraniteQ4KM;
 #[cfg(feature = "llamacpp")]
-const LLAMACPP_RERANKER_GGUF: &str = "bge-reranker-v2-m3.Q5_K_M.gguf";
+const LLAMACPP_RERANKER_MODEL: lunaris_core::models::ModelKind =
+    lunaris_core::models::ModelKind::RerankerBgeV2M3Q5KM;
 
 /// Resolve a llama.cpp GGUF artifact: env override first, then the staged
 /// `~/.lunaris/models/` default. Returns `None` (→ caller falls through to
 /// the candle chain) unless the file actually exists.
 #[cfg(feature = "llamacpp")]
-fn llamacpp_gguf_path(env_var: &str, staged_name: &str) -> Option<std::path::PathBuf> {
+fn llamacpp_gguf_path(
+    env_var: &str,
+    kind: lunaris_core::models::ModelKind,
+) -> Option<std::path::PathBuf> {
     if let Some(p) = std::env::var_os(env_var)
         .map(std::path::PathBuf::from)
         .filter(|p| !p.as_os_str().is_empty())
@@ -2762,9 +2774,9 @@ fn llamacpp_gguf_path(env_var: &str, staged_name: &str) -> Option<std::path::Pat
         );
         return None;
     }
-    std::env::var_os("HOME")
-        .map(|h| std::path::PathBuf::from(h).join(".lunaris/models").join(staged_name))
-        .filter(|p| p.exists())
+    // Same resolution the stager writes to — one function, so a staged file
+    // and the lookup for it cannot land in different directories.
+    lunaris_core::models::staged_path(kind).filter(|p| p.exists())
 }
 
 /// GPU offload for the llama.cpp backends: everything when the `metal`

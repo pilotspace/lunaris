@@ -47,14 +47,14 @@ pub(crate) fn resolve_store_url() -> anyhow::Result<String> {
     {
         return Ok(url);
     }
-    let home = dirs_home().context("cannot determine $HOME to look for ~/.lunaris")?;
+    // W0.7 — the ONE home rule. contextd advertises its store under
+    // `~/.lunaris`, so the CLI must resolve that directory the same way the
+    // daemon does or it looks for a discovery file in a different tree.
+    let home = lunaris_core::models::home_dir()
+        .context("cannot determine $HOME to look for ~/.lunaris")?;
     lunaris_core::store_discovery::discover_contextd_moon(&home.join(".lunaris"))
         .into_url()
         .ok_or_else(|| anyhow::anyhow!(NO_STORE_HELP))
-}
-
-fn dirs_home() -> Option<std::path::PathBuf> {
-    std::env::var_os("HOME").map(std::path::PathBuf::from)
 }
 
 /// Open a handle and run the request through the shared dispatch.

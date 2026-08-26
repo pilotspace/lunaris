@@ -23,6 +23,11 @@ pub mod json_repair;
 // Wave 2.5B: storage-agnostic primitive KV key helpers (moved from lunaris-storage-moon).
 pub mod keyspace;
 pub mod primitives;
+// W0.7 — the ONE catalogue naming the GGUF artifacts (no HTTP, no deps).
+pub mod models;
+// W0.7 — download+verify for the catalogue above; optional, pulls HTTP/TLS.
+#[cfg(feature = "model-staging")]
+pub mod model_staging;
 // RFC 0001 — Scope newtype + ScopeError for multi-agent partition isolation.
 pub mod retention;
 pub mod scope;

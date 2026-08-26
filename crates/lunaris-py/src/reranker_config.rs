@@ -108,7 +108,8 @@ impl RerankerConfig {
 /// Staged default location for the reranker GGUF (`~/.lunaris/models/`).
 #[cfg(feature = "llamacpp")]
 fn default_reranker_gguf() -> PathBuf {
-    crate::embedder_config::lunaris_models_dir().join("bge-reranker-v2-m3.Q5_K_M.gguf")
+    crate::embedder_config::lunaris_models_dir()
+        .join(lunaris_core::models::ModelKind::RerankerBgeV2M3Q5KM.filename())
 }
 
 /// Apply a [`RerankerConfig`] to a freshly-constructed `Lunaris` handle.
@@ -152,7 +153,10 @@ mod tests {
     fn default_reranker_gguf_ends_with_staged_name() {
         let p = default_reranker_gguf();
         assert!(
-            p.ends_with(".lunaris/models/bge-reranker-v2-m3.Q5_K_M.gguf"),
+            p.ends_with(
+                std::path::Path::new(".lunaris/models")
+                    .join(lunaris_core::models::ModelKind::RerankerBgeV2M3Q5KM.filename())
+            ),
             "got {}",
             p.display()
         );

@@ -31,7 +31,7 @@ rmcp = { version = "1.7", features = ["transport-io"] }
 # under ~/.lunaris/models/. default-features = false on the workspace entry;
 # we add only what we need here.
 lunaris      = { workspace = true, features = ["llamacpp"] }
-lunaris-core = { workspace = true }
+lunaris-core = { workspace = true, features = ["model-staging"] }
 lunaris-retrieve = { workspace = true }
 # Shared transport-neutral engine-op handlers (ingest/recall/forget/record_*/
 # status) — one definition, called here and from lunaris-contextd.
@@ -70,15 +70,11 @@ ulid = { workspace = true }
 # by rmcp::schemars re-export). Version pinned to match rmcp 1.7's schemars dep.
 schemars = { version = "1.0", features = ["chrono04"] }
 
-# Wave 1.B — lazy GGUF model stager (indicatif progress on stderr, reqwest streaming)
-# reqwest: workspace 0.13 (rustls+json already there); we add "stream" for
-# bytes_stream() needed by the chunked download path.
-reqwest      = { workspace = true, features = ["stream"] }
-sha2         = { workspace = true }
-futures-util = "0.3"
-# indicatif 0.17 — progress bars on stderr; NOT in workspace (only lunaris-mcp
-# needs it). ProgressDrawTarget::stderr() is the invariant — never stdout().
-indicatif    = "0.17"
+# Wave 1.B — lazy GGUF model staging. W0.7 moved the implementation into
+# `lunaris_core::model_staging` (feature `model-staging`, enabled on the
+# lunaris-core entry above), so reqwest / sha2 / futures-util / indicatif are
+# no longer direct dependencies here: there is exactly one stager in the
+# workspace and this crate calls it.
 
 [features]
 # embedded-moon: bundle an in-process Moon server inside lunaris-mcp.
@@ -91,8 +87,6 @@ embedded-moon = ["lunaris-memory-service/embedded-moon"]
 [dev-dependencies]
 # placeholder — Wave 2/3 integration tests add real deps
 tempfile = "3"
-# Wave 1.B — mock HTTP server for model stager tests (no real network in CI)
-wiremock = "0.6"
 # Wave 2.A — binary-spawn integration tests need tokio process + time features
 tokio = { workspace = true, features = ["process", "time", "io-util"] }
 # Wave 2.A — JSON-RPC message framing in integration tests
