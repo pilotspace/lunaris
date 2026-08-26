@@ -55,6 +55,7 @@ use lunaris_memory_service::{
     feedback::{FeedbackParams, FeedbackResponse},
     forget::{ForgetParams, ForgetResponse},
     ingest::{IngestParams, IngestResponse},
+    profile::{ProfileParams, ProfileResponse},
     recall::{RecallParams, RecallResponse},
     record_decision::{RecordDecisionParams, RecordDecisionResponse},
     record_edit::{RecordEditParams, RecordEditResponse},
@@ -277,6 +278,30 @@ impl LunarisMcpServer {
     ) -> Result<Json<RecordDecisionResponse>, rmcp::ErrorData> {
         let req =
             MemoryRequest::RecordDecision { scope: self.state.scope.as_str().to_owned(), params };
+        decode_dto(self.proxy.dispatch(&self.state, req).await?)
+    }
+
+    /// Render what this scope has actually captured, as a readable page (W4.2).
+    ///
+    /// A read: it writes nothing and summarises nothing with an LLM. Raw
+    /// tool-call telemetry is excluded — the profile is a knowledge artifact,
+    /// and a store that is mostly shell history would otherwise render a page
+    /// that looks busy and says nothing.
+    #[tool(
+        name = "memory.profile",
+        description = "Render what Lunaris has captured about this scope as a readable markdown \
+                       page, grouped by kind (constraints, preferences, decisions, fixes, distilled \
+                       notes, notable edits) and newest first. Use it to answer 'what do you know \
+                       about me / this project?', to review before starting work, or to check whether \
+                       anything is being captured at all. Raw tool-call telemetry is deliberately \
+                       excluded. An empty scope renders an explicit 'nothing captured yet' page rather \
+                       than a blank one."
+    )]
+    async fn profile(
+        &self,
+        Parameters(params): Parameters<ProfileParams>,
+    ) -> Result<Json<ProfileResponse>, rmcp::ErrorData> {
+        let req = MemoryRequest::Profile { scope: self.state.scope.as_str().to_owned(), params };
         decode_dto(self.proxy.dispatch(&self.state, req).await?)
     }
 

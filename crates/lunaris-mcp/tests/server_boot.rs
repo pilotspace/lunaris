@@ -40,6 +40,7 @@ const EXPECTED_TOOLS: &[&str] = &[
     "memory.recall",
     "memory.forget",
     "memory.list_scopes",
+    "memory.profile",
     "memory.remember",
     "memory.record_decision",
     "memory.record_edit",

@@ -26,6 +26,7 @@ pub mod forget;
 pub mod handover;
 pub mod ingest;
 pub mod namespace;
+pub mod profile;
 pub mod protocol;
 pub mod recall;
 pub mod record_decision;

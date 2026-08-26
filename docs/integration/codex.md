@@ -72,7 +72,7 @@ the postinstall download and point directly at a pre-staged binary.
 | Moon (**required**) | The only storage backend; start it with `--shards 1` |
 
 `memory.recall` fuses native HNSW vector search with BM25 keyword search on
-Moon, and all 17 tools are available. There is no zero-dependency
+Moon, and all 18 tools are available. There is no zero-dependency
 fallback: the SQLite backend was deleted in 0.7.0, so a store must come from
 `LUNARIS_MCP_STORAGE` or from a running `lunaris-contextd` advertising one in
 `~/.lunaris/contextd-moon.url` (liveness-probed). With neither, the server
