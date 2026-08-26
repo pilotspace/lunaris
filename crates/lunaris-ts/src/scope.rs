@@ -238,7 +238,7 @@ impl ScopedLunaris {
         let scope = self.scope.clone();
         let scoped = inner.scoped(scope);
         let policy = scoped.retention_policy().await.map_err(napi_err)?;
-        serde_json::to_value(&policy).map_err(napi_err)
+        serde_json::to_value(policy).map_err(napi_err)
     }
 
     /// Set this scope's retention policy.
