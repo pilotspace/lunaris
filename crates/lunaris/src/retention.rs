@@ -104,6 +104,44 @@ pub async fn enforce_at(
     scope: &Scope,
     now_ms: u64,
 ) -> Result<RetentionReceipt, LunarisError> {
+    run(engine, scope, now_ms, Mode::Commit).await
+}
+
+/// Report what [`enforce_at`] would take, taking nothing.
+///
+/// Wave 6 / R1. The MCP surface that exposes retention is LLM-driven, and the
+/// `memory.forget` ruling (0.6.2 Task F) is that such a surface previews by
+/// default. Without this, a caller wanting a dry run had to recompute
+/// `now - max_age_ms` itself — a second definition of the cutoff, and this
+/// module exists because two definitions of a delete drift apart. The preview
+/// therefore shares one cutoff computation with the commit, in [`run`].
+///
+/// A preview of a `hard` policy is still a preview: it takes the `dry_run`
+/// branch and never mints a confirmation token, so previewing cannot be a
+/// path to a hard delete.
+pub async fn preview_at(
+    engine: &crate::handle::Lunaris,
+    scope: &Scope,
+    now_ms: u64,
+) -> Result<RetentionReceipt, LunarisError> {
+    run(engine, scope, now_ms, Mode::Preview).await
+}
+
+/// Whether a [`run`] pass commits or only reports.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Commit,
+    Preview,
+}
+
+/// The one place a retention cutoff is computed. Both the commit and the
+/// preview enter here so they cannot disagree about which rows are eligible.
+async fn run(
+    engine: &crate::handle::Lunaris,
+    scope: &Scope,
+    now_ms: u64,
+    mode: Mode,
+) -> Result<RetentionReceipt, LunarisError> {
     let storage = engine.storage();
     let Some(policy) = read_policy(&storage, scope, &engine.clock()).await? else {
         return Ok(RetentionReceipt { policy: None, cutoff: None, forget: None });
@@ -115,7 +153,11 @@ pub async fn enforce_at(
     let cutoff = Hlc { wall_ms: now_ms.saturating_sub(policy.max_age_ms), counter: 0, node_id: 0 };
     let scoped = engine.scoped(scope.clone());
 
-    let forget = if policy.hard {
+    let forget = if mode == Mode::Preview {
+        // A preview never mints a confirmation token, whatever the policy
+        // says: `hard` authorizes the sweep, not a shortcut around D-21.
+        scoped.forget(ForgetTarget::Before(cutoff).dry_run()).await?
+    } else if policy.hard {
         // Take the preview first and derive the token from it, exactly as a
         // human hard-forget must. The policy authorizes the sweep; it does not
         // excuse it from the D-21 rail.

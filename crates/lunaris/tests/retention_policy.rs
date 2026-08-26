@@ -261,3 +261,66 @@ async fn an_unparseable_policy_is_an_error_not_a_silent_keep_everything() {
         "the error must name what failed; got: {err}"
     );
 }
+
+/// Wave 6 / R1 — a policied scope must be able to answer "what would a sweep
+/// take?" without taking it.
+///
+/// The MCP surface that exposes retention is LLM-driven, and the ruling on
+/// `memory.forget` (0.6.2 Task F) was that such a surface previews by default.
+/// Retention had no preview at all: `enforce_at` computes the cutoff and
+/// commits in one step, so a caller wanting a dry run had to recompute
+/// `now - max_age_ms` itself — a second definition of the cutoff, which is
+/// exactly the drift this module's header refuses for delete semantics.
+///
+/// So the preview lives next to the enforce, sharing one cutoff computation.
+#[tokio::test]
+async fn preview_reports_the_sweep_without_taking_it() {
+    let Some(url) = moon_url() else { return };
+    let (lunaris, scope) = fresh(&url, "w6pv").await;
+    let scoped = lunaris.scoped(scope.clone());
+    let storage = lunaris.storage();
+
+    for i in 0..3 {
+        scoped
+            .ingest(EpisodeBuilder::new(format!("pv/{i}"), format!("record number {i}")))
+            .await
+            .expect("ingest");
+    }
+    scoped.set_retention_policy(RetentionPolicy::max_age_ms(0)).await.expect("policy");
+
+    let preview = scoped.preview_retention().await.expect("preview");
+    let f = preview.forget.as_ref().expect("a policied scope must report a forget");
+    assert!(preview.policy.is_some(), "preview lost the policy it read");
+    assert!(preview.cutoff.is_some(), "preview must report the cutoff it would use");
+    assert!(f.preview, "preview_retention returned a committing receipt");
+    assert_eq!(f.matched, 3, "preview must report what a sweep would take; got {}", f.matched);
+    assert_eq!(
+        (f.rows_written, f.rows_deleted),
+        (0, 0),
+        "preview WROTE: rows_written={}, rows_deleted={}",
+        f.rows_written,
+        f.rows_deleted
+    );
+    assert_eq!(live_episodes(&storage, &scope).await, 3, "preview removed rows from a live scope");
+
+    // And the preview did not consume the work: the real sweep still finds it.
+    let swept = scoped.enforce_retention().await.expect("sweep");
+    let s = swept.forget.as_ref().expect("forget");
+    assert_eq!(s.matched, 3, "the preview consumed the sweep; enforce found {}", s.matched);
+    assert_eq!(live_episodes(&storage, &scope).await, 0, "enforce after preview swept nothing");
+}
+
+/// A scope with no policy previews as a no-op, exactly as enforce does — the
+/// two must not disagree about what "no policy" means.
+#[tokio::test]
+async fn preview_without_a_policy_is_a_no_op() {
+    let Some(url) = moon_url() else { return };
+    let (lunaris, scope) = fresh(&url, "w6pvnp").await;
+    let scoped = lunaris.scoped(scope.clone());
+
+    let preview = scoped.preview_retention().await.expect("preview with no policy must succeed");
+    assert!(preview.policy.is_none(), "a scope with no policy previewed a policy");
+    assert!(preview.cutoff.is_none(), "a scope with no policy previewed a cutoff");
+    assert!(preview.forget.is_none(), "a scope with no policy previewed a forget");
+    assert_eq!(preview.rows_swept(), 0);
+}

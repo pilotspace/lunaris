@@ -364,6 +364,42 @@ export declare class ScopedLunaris {
    * query composition.
    */
   dsl(): RetrievalBuilder
+  /**
+   * Read this scope's retention policy, or `null` when it has none.
+   *
+   * Wave 6 / R1. A scope with no policy never expires anything — nothing
+   * in Lunaris removes a memory on a timer, by design (the engine ships no
+   * scheduler; see `crates/lunaris/src/retention.rs`). Until this landed
+   * the policy was unreachable from TypeScript at all, so "no policy" was
+   * the only state a TS caller could be in.
+   *
+   * Returns `{ maxAgeMs, hard } | null`.
+   */
+  retentionPolicy(): Promise<any>
+  /**
+   * Set this scope's retention policy.
+   *
+   * `hard` defaults to `false`, which soft-deletes: swept memories are
+   * hidden from recall but stay recoverable. `true` deletes irrecoverably.
+   * The recoverable mode is the default on purpose — an accidental policy
+   * costs data, an accidentally-absent one costs disk.
+   *
+   * Setting a policy does NOT schedule anything. Call `enforceRetention`
+   * to run a pass.
+   */
+  setRetentionPolicy(maxAgeMs: number, hard?: boolean | undefined | null): Promise<void>
+  /**
+   * Run one retention pass. **This commits** — see `previewRetention` for
+   * the dry run.
+   *
+   * Mirrors the Rust engine method rather than inverting the default: the
+   * preview-by-default ruling belongs to the LLM-driven MCP tool
+   * (`memory.retention_enforce`), not to a programmatic SDK where an
+   * unexpected no-op is its own kind of bug.
+   */
+  enforceRetention(): Promise<any>
+  /** Report what `enforceRetention` would sweep, sweeping nothing. */
+  previewRetention(): Promise<any>
 }
 
 /** Slack archive wrapper. Holds a root MessageStream scoped at `slack:archive/`. */

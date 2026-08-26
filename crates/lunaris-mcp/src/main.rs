@@ -61,6 +61,9 @@ use lunaris_memory_service::{
     record_edit::{RecordEditParams, RecordEditResponse},
     remember::{RememberParams, RememberResponse},
     resolve::{ResolveParams, ResolveResponse},
+    retention::{
+        RetentionEnforceParams, RetentionEnforceResponse, RetentionParams, RetentionResponse,
+    },
     scratchpad_consolidate::{ScratchpadConsolidateParams, ScratchpadConsolidateResponse},
     scratchpad_grep::{ScratchpadGrepParams, ScratchpadGrepResponse},
     scratchpad_read::{ScratchpadReadParams, ScratchpadReadResponse},
@@ -302,6 +305,54 @@ impl LunarisMcpServer {
         Parameters(params): Parameters<ProfileParams>,
     ) -> Result<Json<ProfileResponse>, rmcp::ErrorData> {
         let req = MemoryRequest::Profile { scope: self.state.scope.as_str().to_owned(), params };
+        decode_dto(self.proxy.dispatch(&self.state, req).await?)
+    }
+
+    /// Read or set this scope's retention policy (Wave 6 / R1).
+    ///
+    /// Until this shipped, `ScopedLunaris::{retention_policy,
+    /// set_retention_policy}` had no caller outside their own test file, so
+    /// the engine's "the MCP surface can expose it" resolution to shipping no
+    /// scheduler was unredeemed: nothing on any reachable surface could
+    /// configure cleanup at all.
+    #[tool(
+        name = "memory.retention",
+        description = "Read or set how long this scope keeps memories. Call it with no arguments to \
+                       read the current policy — a scope with no policy never expires anything, by \
+                       anything. Supply max_age_ms to set one: memories older than that become \
+                       eligible for a sweep. Sweeps are NOT automatic; run memory.retention_enforce \
+                       to perform one. Set hard=true only for unrecoverable deletion — the default \
+                       soft mode hides memories from recall but keeps them recoverable."
+    )]
+    async fn retention(
+        &self,
+        Parameters(params): Parameters<RetentionParams>,
+    ) -> Result<Json<RetentionResponse>, rmcp::ErrorData> {
+        let req = MemoryRequest::Retention { scope: self.state.scope.as_str().to_owned(), params };
+        decode_dto(self.proxy.dispatch(&self.state, req).await?)
+    }
+
+    /// Run one retention pass — previewing unless told otherwise (Wave 6 / R1).
+    ///
+    /// `dry_run` defaults to `true`, the same ruling as `memory.forget`: an
+    /// LLM-driven surface does not delete by default. The preview shares the
+    /// engine's single cutoff computation, so it cannot report a different
+    /// eligible set than the commit would take.
+    #[tool(
+        name = "memory.retention_enforce",
+        description = "Run one retention pass over this scope, deleting memories older than the \
+                       policy set by memory.retention. PREVIEWS BY DEFAULT: with no arguments (or \
+                       dry_run=true) it reports how many memories a sweep would take and takes \
+                       none. Pass dry_run=false to actually sweep. Returns status='no_policy' when \
+                       the scope has no retention policy, which is not the same as a sweep that \
+                       found nothing. Lunaris never runs this on a timer — every pass is one you ask for."
+    )]
+    async fn retention_enforce(
+        &self,
+        Parameters(params): Parameters<RetentionEnforceParams>,
+    ) -> Result<Json<RetentionEnforceResponse>, rmcp::ErrorData> {
+        let req =
+            MemoryRequest::RetentionEnforce { scope: self.state.scope.as_str().to_owned(), params };
         decode_dto(self.proxy.dispatch(&self.state, req).await?)
     }
 

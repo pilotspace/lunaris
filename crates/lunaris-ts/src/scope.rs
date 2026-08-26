@@ -222,6 +222,97 @@ impl ScopedLunaris {
         let builder = self.inner.scoped(self.scope.clone()).dsl();
         crate::generated::RetrievalBuilder { inner: Arc::new(builder) }
     }
+
+    /// Read this scope's retention policy, or `null` when it has none.
+    ///
+    /// Wave 6 / R1. A scope with no policy never expires anything — nothing
+    /// in Lunaris removes a memory on a timer, by design (the engine ships no
+    /// scheduler; see `crates/lunaris/src/retention.rs`). Until this landed
+    /// the policy was unreachable from TypeScript at all, so "no policy" was
+    /// the only state a TS caller could be in.
+    ///
+    /// Returns `{ maxAgeMs, hard } | null`.
+    #[napi(js_name = "retentionPolicy")]
+    pub async fn retention_policy(&self) -> napi::Result<serde_json::Value> {
+        let inner = self.inner.clone();
+        let scope = self.scope.clone();
+        let scoped = inner.scoped(scope);
+        let policy = scoped.retention_policy().await.map_err(napi_err)?;
+        serde_json::to_value(&policy).map_err(napi_err)
+    }
+
+    /// Set this scope's retention policy.
+    ///
+    /// `hard` defaults to `false`, which soft-deletes: swept memories are
+    /// hidden from recall but stay recoverable. `true` deletes irrecoverably.
+    /// The recoverable mode is the default on purpose — an accidental policy
+    /// costs data, an accidentally-absent one costs disk.
+    ///
+    /// Setting a policy does NOT schedule anything. Call `enforceRetention`
+    /// to run a pass.
+    #[napi(js_name = "setRetentionPolicy")]
+    pub async fn set_retention_policy(
+        &self,
+        max_age_ms: i64,
+        hard: Option<bool>,
+    ) -> napi::Result<()> {
+        // napi floats every integer above u32::MAX, so the boundary is worth
+        // being explicit about: a negative age is a caller error, not a
+        // saturating cast to a very long window.
+        let max_age_ms = u64::try_from(max_age_ms).map_err(|_| {
+            napi::Error::from_reason(format!(
+                "setRetentionPolicy: maxAgeMs must be >= 0, got {max_age_ms}"
+            ))
+        })?;
+        let mut policy = ::lunaris_core::retention::RetentionPolicy::max_age_ms(max_age_ms);
+        if hard.unwrap_or(false) {
+            policy = policy.hard();
+        }
+        let inner = self.inner.clone();
+        let scope = self.scope.clone();
+        let scoped = inner.scoped(scope);
+        scoped.set_retention_policy(policy).await.map_err(napi_err)
+    }
+
+    /// Run one retention pass. **This commits** — see `previewRetention` for
+    /// the dry run.
+    ///
+    /// Mirrors the Rust engine method rather than inverting the default: the
+    /// preview-by-default ruling belongs to the LLM-driven MCP tool
+    /// (`memory.retention_enforce`), not to a programmatic SDK where an
+    /// unexpected no-op is its own kind of bug.
+    #[napi(js_name = "enforceRetention")]
+    pub async fn enforce_retention(&self) -> napi::Result<serde_json::Value> {
+        self.retention_pass(false).await
+    }
+
+    /// Report what `enforceRetention` would sweep, sweeping nothing.
+    #[napi(js_name = "previewRetention")]
+    pub async fn preview_retention(&self) -> napi::Result<serde_json::Value> {
+        self.retention_pass(true).await
+    }
+}
+
+impl ScopedLunaris {
+    /// One body for both retention passes, so the commit and the preview
+    /// cannot report their receipts in different shapes.
+    async fn retention_pass(&self, preview: bool) -> napi::Result<serde_json::Value> {
+        let inner = self.inner.clone();
+        let scope = self.scope.clone();
+        let scoped = inner.scoped(scope);
+        let receipt = if preview {
+            scoped.preview_retention().await.map_err(napi_err)?
+        } else {
+            scoped.enforce_retention().await.map_err(napi_err)?
+        };
+        Ok(serde_json::json!({
+            "configured": receipt.policy.is_some(),
+            "cutoff_ms": receipt.cutoff.map(|c| c.wall_ms),
+            "rows_swept": receipt.rows_swept(),
+            "preview": receipt.forget.as_ref().map(|f| f.preview).unwrap_or(preview),
+            "matched": receipt.forget.as_ref().map(|f| f.matched).unwrap_or(0),
+        }))
+    }
 }
 
 // ---------------------------------------------------------------------------

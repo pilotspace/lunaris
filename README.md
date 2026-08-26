@@ -78,7 +78,7 @@ published to crates.io and has no prebuilt release binary yet.
 
 ## 1. Give your AI agent memory (MCP)
 
-The MCP server gives any MCP-capable agent **18 memory tools** — nine
+The MCP server gives any MCP-capable agent **20 memory tools** — nine
 durable-memory tools (`memory.ingest`, `memory.recall`, `memory.forget`,
 `memory.list_scopes`, `memory.record_decision`, `memory.record_edit`,
 `memory.feedback`, `memory.status`, `memory.remember`), four working-memory
@@ -90,7 +90,10 @@ curation tools that are the reason to pick Lunaris over a vector store —
 `memory.resolve` (retire a memory that is superseded),
 `memory.dream_agenda` (clusters of raw episodes ripe for distillation) and
 `memory.distill` (write the distilled prose back durably) and
-`memory.profile` (render what the scope actually knows, as a readable page).
+`memory.profile` (render what the scope actually knows, as a readable page),
+and two retention tools (`memory.retention` to set how long this scope keeps
+memories, `memory.retention_enforce` to run a pass — previewing by default,
+and never on a timer).
 The roster is
 pinned by `crates/lunaris-mcp/tests/server_boot.rs::server_boots_and_lists_all_tools`,
 which drives the real binary through `tools/list`.

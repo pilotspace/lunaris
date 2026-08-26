@@ -238,8 +238,99 @@ impl PyScopedLunaris {
         crate::generated::PyRetrievalBuilder { inner: Arc::new(builder) }
     }
 
+    /// Read this scope's retention policy, or `None` when it has none.
+    ///
+    /// Wave 6 / R1. A scope with no policy never expires anything — nothing
+    /// in Lunaris removes a memory on a timer, by design (the engine ships no
+    /// scheduler; see `crates/lunaris/src/retention.rs`). Until this landed
+    /// the policy was unreachable from Python at all, so "no policy" was the
+    /// only state a Python caller could be in.
+    ///
+    /// Returns a dict `{"max_age_ms": int, "hard": bool}` or `None`.
+    fn retention_policy<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        let scope = self.scope.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let scoped = inner.scoped(scope);
+            let policy = scoped.retention_policy().await.map_err(py_err)?;
+            Python::attach(|py| Ok(pythonize::pythonize(py, &policy)?.unbind()))
+        })
+    }
+
+    /// Set this scope's retention policy.
+    ///
+    /// `hard=False` (the default) soft-deletes: swept memories are hidden
+    /// from recall but stay recoverable. `hard=True` deletes irrecoverably —
+    /// the default is the recoverable failure mode on purpose, because an
+    /// accidental policy costs data and an accidentally-absent one costs disk.
+    ///
+    /// Setting a policy does NOT schedule anything. Call `enforce_retention`
+    /// to run a pass.
+    #[pyo3(signature = (max_age_ms, hard = false))]
+    fn set_retention_policy<'py>(
+        &self,
+        py: Python<'py>,
+        max_age_ms: u64,
+        hard: bool,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        let scope = self.scope.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let mut policy = ::lunaris_core::retention::RetentionPolicy::max_age_ms(max_age_ms);
+            if hard {
+                policy = policy.hard();
+            }
+            let scoped = inner.scoped(scope);
+            scoped.set_retention_policy(policy).await.map_err(py_err)?;
+            Python::attach(|py| Ok(py.None()))
+        })
+    }
+
+    /// Run one retention pass. **This commits** — see `preview_retention` for
+    /// the dry run.
+    ///
+    /// Mirrors the Rust engine method exactly rather than inverting the
+    /// default: the `dry_run`-by-default ruling belongs to the LLM-driven MCP
+    /// tool (`memory.retention_enforce`), not to a programmatic SDK where an
+    /// unexpected no-op is its own kind of bug.
+    ///
+    /// Returns `{"rows_swept": int, "configured": bool, "cutoff_ms": int|None}`.
+    fn enforce_retention<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        self.retention_pass(py, false)
+    }
+
+    /// Report what `enforce_retention` would sweep, sweeping nothing.
+    fn preview_retention<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        self.retention_pass(py, true)
+    }
+
     fn __repr__(&self) -> String {
         format!("ScopedLunaris(scope={:?})", self.scope.as_str())
+    }
+}
+
+impl PyScopedLunaris {
+    /// One body for both retention passes, so the commit and the preview
+    /// cannot report their receipts in different shapes.
+    fn retention_pass<'py>(&self, py: Python<'py>, preview: bool) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        let scope = self.scope.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let scoped = inner.scoped(scope);
+            let receipt = if preview {
+                scoped.preview_retention().await.map_err(py_err)?
+            } else {
+                scoped.enforce_retention().await.map_err(py_err)?
+            };
+            let out = serde_json::json!({
+                "configured": receipt.policy.is_some(),
+                "cutoff_ms": receipt.cutoff.map(|c| c.wall_ms),
+                "rows_swept": receipt.rows_swept(),
+                "preview": receipt.forget.as_ref().map(|f| f.preview).unwrap_or(preview),
+                "matched": receipt.forget.as_ref().map(|f| f.matched).unwrap_or(0),
+            });
+            Python::attach(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+        })
     }
 }
 
