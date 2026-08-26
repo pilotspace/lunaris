@@ -78,18 +78,20 @@ published to crates.io and has no prebuilt release binary yet.
 
 ## 1. Give your AI agent memory (MCP)
 
-The MCP server gives any MCP-capable agent **17 memory tools** — nine
+The MCP server gives any MCP-capable agent **18 memory tools** — nine
 durable-memory tools (`memory.ingest`, `memory.recall`, `memory.forget`,
 `memory.list_scopes`, `memory.record_decision`, `memory.record_edit`,
 `memory.feedback`, `memory.status`, `memory.remember`), four working-memory
 scratchpad tools
 (`memory.scratchpad_write`, `memory.scratchpad_read`,
-`memory.scratchpad_grep`, `memory.scratchpad_consolidate`), and four
+`memory.scratchpad_grep`, `memory.scratchpad_consolidate`), and five
 curation tools that are the reason to pick Lunaris over a vector store —
 `memory.verify_agenda` (what the store thinks may be stale),
 `memory.resolve` (retire a memory that is superseded),
 `memory.dream_agenda` (clusters of raw episodes ripe for distillation) and
-`memory.distill` (write the distilled prose back durably). The roster is
+`memory.distill` (write the distilled prose back durably) and
+`memory.profile` (render what the scope actually knows, as a readable page).
+The roster is
 pinned by `crates/lunaris-mcp/tests/server_boot.rs::server_boots_and_lists_all_tools`,
 which drives the real binary through `tools/list`.
 
@@ -207,6 +209,9 @@ memory deliberately:
   previews by default; show the match count, then re-issue with
   `dry_run: false` to actually delete.
 - Check backend health with `memory.status` if recall returns nothing.
+- `memory.profile` renders what this scope actually knows as a readable page —
+  use it when starting on unfamiliar work, or to check anything is being
+  captured at all.
 ```
 
 ## 2. Build with an SDK

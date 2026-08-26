@@ -7,6 +7,19 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
 
 ### Added
 
+- **`memory.profile` — the human-readable memory artifact (W4.2).** Renders a
+  scope's captured knowledge as a markdown page, grouped by kind and newest
+  first, ordered most-durable-first (constraints, preferences, decisions,
+  fixes, distilled notes, notable edits). It is a pure read: no writes, no LLM
+  summarisation, one scan of the scope's episode partition.
+  `memory.recall` answers a question; nothing could answer "what do you
+  actually know about me?", which is the question that made the curation gap
+  visible. Raw telemetry is excluded — a store that is 91.6% shell history
+  would otherwise render a page that looks busy and says nothing. An empty
+  scope renders an explicit "nothing captured yet" page naming
+  `memory.remember`, because a blank page and "nothing was ever curated here"
+  are the same bytes and opposite meanings. The MCP roster is now 18 tools.
+
 - **`memory.remember` — the direct-capture write path (W4.3b).** One tool,
   four kinds: `decision` (a choice and its rationale), `fix` (what broke and
   what actually fixed it), `preference` (how this user wants to work),

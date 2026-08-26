@@ -8,14 +8,14 @@ running `lunaris-contextd` advertising its store — see
 refuses to boot. `setup-lunaris-agents.py` writes it for you and
 expects Moon installed via the Moon repo's curl installer.
 
-**17 tools** are registered — nine durable-memory tools (`memory.ingest`,
+**18 tools** are registered — nine durable-memory tools (`memory.ingest`,
 `memory.recall`, `memory.forget`, `memory.list_scopes`, `memory.record_decision`,
 `memory.record_edit`, `memory.feedback`, `memory.status`, `memory.remember`), four
 working-memory
 scratchpad tools (`memory.scratchpad_write`, `memory.scratchpad_read`,
-`memory.scratchpad_grep`, `memory.scratchpad_consolidate`), and four curation
+`memory.scratchpad_grep`, `memory.scratchpad_consolidate`), and five curation
 tools (`memory.verify_agenda`, `memory.resolve`, `memory.dream_agenda`,
-`memory.distill`) that let an agent maintain its memory rather than only append
+`memory.distill`, `memory.profile`) that let an agent maintain its memory rather than only append
 to it.
 
 ---
@@ -216,7 +216,7 @@ instead (the crate is not on crates.io — see Installation below).
 | Moon (**required**) | The only storage backend; start it with `--shards 1` |
 
 `memory.recall` fuses native HNSW vector search with BM25 keyword search on
-Moon, and all 17 tools are available. There is no zero-dependency
+Moon, and all 18 tools are available. There is no zero-dependency
 fallback: the SQLite backend was deleted in 0.7.0, so a store must come from
 `LUNARIS_MCP_STORAGE` or from a running `lunaris-contextd` advertising one in
 `~/.lunaris/contextd-moon.url` (liveness-probed). With neither, the server

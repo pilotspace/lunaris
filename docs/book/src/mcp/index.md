@@ -51,8 +51,8 @@ the `cargo install --git` form above — plain `cargo install lunaris-mcp`
 
 ## Tool surface
 
-**17 tools** are registered (all implemented) — nine durable-memory tools,
-four working-memory (scratchpad) tools, and four curation tools:
+**18 tools** are registered (all implemented) — nine durable-memory tools,
+four working-memory (scratchpad) tools, and five curation tools:
 
 | Tool | Input | Returns |
 |------|-------|---------|
@@ -69,6 +69,7 @@ four working-memory (scratchpad) tools, and four curation tools:
 | `memory.resolve` | `episode_id`, `action` (`keep` \| `invalidate`), optional `reason`, `superseded_by` | `{ status, episode_id, invalidated, agenda_removed }` |
 | `memory.dream_agenda` | optional `limit`, `min_cluster_size`, `max_activation` | `{ status, total_candidates, count, clusters[] }` — **read-only**; writes nothing |
 | `memory.distill` | `kind` (`decision` \| `lesson` \| `invariant` \| `gotcha`), `content`, `source_episode_ids`, optional `title`, `tags`, `dedupe_key` | `{ status, distilled_episode_id, lsn, archived_count, was_duplicate }` |
+| `memory.profile` | optional `limit_per_section` | `{ markdown, counts, total }` |
 | `memory.scratchpad_write` | `key`, `value`, optional `namespace` | `{ lsn }` |
 | `memory.scratchpad_read` | `key`, optional `namespace` | `{ found, value }` |
 | `memory.scratchpad_grep` | `pattern`, optional `namespace` | `{ entries[] }` |
@@ -194,7 +195,7 @@ docker run -d --name lunaris-moon -p 6381:6379 \
 ```
 
 `--shards 1` is mandatory — an ingest is one MULTI/EXEC transaction and a
-sharded Moon rejects it. All 17 tools work against Moon: native HNSW
+sharded Moon rejects it. All 18 tools work against Moon: native HNSW
 vector search, BM25 keyword fusion, graph, queues, and search-side bi-temporal
 reads. See
 [Running an external Moon](https://github.com/pilotspace/lunaris/blob/main/docs/operations/external-moon.md).
