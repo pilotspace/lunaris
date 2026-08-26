@@ -12,7 +12,7 @@
 //! | grep(pat, k)    | `Lunaris::recall().filter(StartsWith { source, session })`   |
 //! | ls(p)           | `storage().scan_range(<prefix bytes>, None)` (unchanged)     |
 //! | forget()        | `Lunaris::forget(ForgetTarget::Scope(ScopeSpec::BySource))`  |
-//! | as_of(ts)       | borrowed view re-running `read_at` against a fixed [`Hlc`]   |
+//! | as_of(ts)       | borrowed view re-running the read against a fixed [`Hlc`]   |
 //!
 //! ## ≤50-LOC public-surface contract (HELIOS-01)
 //!
@@ -65,11 +65,6 @@ use crate::primitives::WorkingMemory;
 
 /// helios-rfc §5.3 source-prefix convention — frozen for v0.
 const HELIOS_PREFIX: &str = "helios:fs/";
-
-/// Default `top` the recall path uses when reconstructing a single file via
-/// [`CodingSessionMemory::read`]. 8 chunks ≈ 4000 tokens at the Plan 02-01 chunker
-/// default (500 tokens / chunk).
-const READ_TOP: usize = 8;
 
 /// **≤50 LOC public surface** (HELIOS-01 contract). Nine methods on
 /// `CodingSessionMemory` + [`AsOfScratchpad::read`] = 10 public symbols total.
@@ -133,15 +128,17 @@ impl CodingSessionMemory {
             Some(_) => Err(LunarisError::Storage(StorageError::Backend(
                 "coding_session_memory_read_unexpected_json_shape".into(),
             ))),
-            None => {
-                // Fall back to the multi-chunk reconstruction path used by
-                // v0.1.0 — a single-shot Value::String lookup misses the case
-                // where the chunker emitted multiple chunks for a large
-                // payload. `read_at` concatenates every hit under the exact
-                // session-scoped source.
-                let source = format!("{}{}", self.session_prefix, path);
-                read_at(&self.lunaris, &self.scope, &source, path, None).await
-            }
+            // F42 — there is no second reconstruction path any more. The old
+            // fallback existed because "a single-shot Value::String lookup
+            // misses the case where the chunker emitted multiple chunks",
+            // which was never true: `WorkingMemory::read` recovers the WHOLE
+            // value from the parent Episode payload, so chunk count is
+            // irrelevant to it. What the fallback actually did was concatenate
+            // `Hit::text` — smart-punctuation-rewritten chunk text — across
+            // every version of the path, so it answered with mangled, stale
+            // content in the one case it was reached. `None` is the honest
+            // answer when the episode row is gone.
+            None => Ok(None),
         }
     }
 
@@ -261,58 +258,24 @@ impl AsOfScratchpad<'_> {
     /// Time-travel read. Same shape as [`CodingSessionMemory::read`] but seeds the
     /// retrieval `as_of` with this view's fixed timestamp.
     pub async fn read(&self, path: &str) -> Result<Option<String>, LunarisError> {
-        let source = format!("{}{}", self.inner.session_prefix, path);
-        read_at(&self.inner.lunaris, &self.inner.scope, &source, path, Some(self.ts)).await
+        // F42 — same shape as `CodingSessionMemory::read`, one `as_of` apart.
+        // Both now go through the single `WorkingMemory` read, which recovers
+        // the value VERBATIM from the parent Episode instead of rebuilding it
+        // from lossy chunk text, and resolves to ONE version instead of gluing
+        // superseded bodies together.
+        match self.inner.wm.read_at(path, Some(self.ts)).await? {
+            Some(serde_json::Value::String(s)) => Ok(Some(s)),
+            Some(_) => Err(LunarisError::Storage(StorageError::Backend(
+                "coding_session_memory_as_of_read_unexpected_json_shape".into(),
+            ))),
+            None => Ok(None),
+        }
     }
 }
 
 // ---------------------------------------------------------------------------
 // Internal helpers (kept private; do NOT count toward the ≤50 LOC contract)
 // ---------------------------------------------------------------------------
-
-/// Shared implementation backing [`AsOfScratchpad::read`] and the multi-chunk
-/// fallback inside [`CodingSessionMemory::read`]. Runs the recall, filters by
-/// exact source equality via [`Filter::StartsWith`] (NEVER a SQL wildcard
-/// fragment — T-12-01-01), and concatenates `Hit::text` into a single body.
-async fn read_at(
-    lunaris: &Arc<Lunaris>,
-    scope: &Scope,
-    source: &str,
-    query_text: &str,
-    as_of: Option<Hlc>,
-) -> Result<Option<String>, LunarisError> {
-    // F41 — `Filter::Eq`, not `Filter::StartsWith`. The prefix of a path is
-    // not the path: `read("notes")` matched `notes-old` as well and the loop
-    // below concatenated both. `Eq` is also what this function's own contract
-    // has always claimed, and unlike `StartsWith` it renders as a real Moon
-    // KNN prefilter (`@source:{v}`) rather than being post-hydrate filtered,
-    // so the exact read stops carrying a fanout that grows with the session.
-    let filter = Filter::Eq { field: "source".into(), value: source.into() };
-    // F41 — `.with_scope(scope)` is load-bearing. `recall_with_degraded_check`
-    // hangs off the BARE handle, whose builder defaults to `Scope::dev()`,
-    // while every write goes to the pad's own scope. Without this the
-    // time-travel read searched a partition the caller never wrote to and
-    // answered `None` for data that was definitely there.
-    let mut builder = lunaris
-        .recall_with_degraded_check()
-        .await?
-        .with_scope(scope.clone())
-        .filter(filter)
-        .top(READ_TOP)
-        .with_initial_degraded(false);
-    if let Some(ts) = as_of {
-        builder = builder.as_of(ts);
-    }
-    let hits = builder.execute(lunaris_retrieve::Query::text(query_text)).await?;
-    if hits.is_empty() {
-        return Ok(None);
-    }
-    let mut text = String::new();
-    for h in &hits {
-        text.push_str(&h.text);
-    }
-    Ok(Some(text))
-}
 
 // ---------------------------------------------------------------------------
 // Tests

@@ -5,6 +5,44 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
 
 ## [Unreleased]
 
+### Fixed
+
+- **The scratchpad's time-travel read returned rewritten, stale, or no content
+  (F42).** `AsOfScratchpad::read` — and the multi-chunk fallback in
+  `CodingSessionMemory::read` — rebuilt the answer by concatenating `Hit::text`
+  across every hit. Three independent defects, all measured on a live Moon:
+
+  - **Content was rewritten at ingest.** Chunk text is a lossy projection of
+    the document: the chunker parses with `pulldown_cmark::Options::all()`,
+    which includes `ENABLE_SMART_PUNCTUATION`, and rebuilds text from the event
+    stream, so `--` became an en dash, `...` became `…`, ASCII quotes became
+    typographic ones and spaces appeared inside values. (Filed as
+    "analyzer-normalised index text"; the search index was never involved.)
+  - **Superseded versions were glued onto the answer.** Every write mints a new
+    Episode under the same `source`; all versions stay indexed and all were
+    concatenated, so the answer accumulated stale content in proportion to how
+    often the path had been edited.
+  - **A stopword-like path was write-OK, read-IMPOSSIBLE.** A path whose name
+    analyses to an empty FT query (`big`, `state`) made the read fail outright
+    with `ERR empty query after analysis`.
+
+  Both callers now route through a single `WorkingMemory` read, which recovers
+  the value verbatim from the parent Episode and resolves to one version; the
+  second reconstruction path is deleted rather than repaired.
+  `CodingSessionMemory::read` was already correct and is unchanged in behaviour.
+
+  **One behaviour change reaches a shipped surface.** `WorkingMemory::read`'s
+  ranked fallback — used by `memory.scratchpad_read` (MCP / contextd) when the
+  F40 source-index sidecar is missing — took the top-RANKED hit, which is not
+  the same as the CURRENT one: all versions of a key stay indexed under the
+  same `source`, so a better-ranked older body could win. It now takes the
+  greatest episode ULID, which is the newest version. Reads that were returning
+  a stale value in that fallback will start returning the live one.
+
+  Historical `as_of` pins are unaffected: more than an hour back they are still
+  refused with `StorageError::NotSupported` on a backend with no KV version
+  chain, which is the same guard the old path hit.
+
 ### Changed
 
 - **Recall ranking on the MCP / hook / CLI path shifts toward previously-used

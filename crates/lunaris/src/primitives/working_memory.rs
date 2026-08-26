@@ -164,19 +164,57 @@ impl WorkingMemory {
     /// rewrites quotes / dashes and corrupts JSON values — see
     /// `Self::recover_value`).
     pub async fn read(&self, k: &str) -> Result<Option<serde_json::Value>, LunarisError> {
+        self.read_at(k, None).await
+    }
+
+    /// [`Self::read`] pinned to `as_of`, or to the live snapshot when `None`.
+    ///
+    /// F42 — this is the ONE read implementation. `CodingSessionMemory` used to
+    /// carry a second one (a free `read_at` that concatenated `Hit::text`
+    /// across every hit), and it was wrong in three independent ways this path
+    /// is right in by construction:
+    ///
+    /// * **Content.** Chunk text is a LOSSY projection — the chunker parses
+    ///   with `pulldown_cmark::Options::all()` (`ENABLE_SMART_PUNCTUATION`) and
+    ///   rebuilds text from the event stream, so `--` becomes an en dash and
+    ///   ASCII quotes become typographic ones AT INGEST. Recovering from the
+    ///   parent Episode payload is the only way back to the written bytes.
+    /// * **Version.** Every write mints a NEW Episode under the same `source`.
+    ///   Concatenating every hit glued superseded bodies onto the answer, in
+    ///   proportion to how often the path had been edited. Resolving to ONE
+    ///   episode is what makes the read a read.
+    /// * **Query text.** The index path needs none, so a path whose NAME
+    ///   analyses to an empty FT query (`big`, `state`) is no longer
+    ///   write-OK / read-IMPOSSIBLE.
+    ///
+    /// On a backend with no KV version chain a historical `as_of` is REFUSED by
+    /// `read_as_of` rather than answered with present-time data (Moon 0.6.2
+    /// task 9). That is unchanged here and deliberately so: this path hits the
+    /// same guard the old one did, so the honest 501 survives the fix.
+    /// Crate-internal on purpose. `WorkingMemory`'s public surface is capped at
+    /// 7 symbols by the PRIM-04 contract, and this method's only callers —
+    /// [`Self::read`] and `AsOfScratchpad::read` — are both in this crate.
+    /// Spending a capped public symbol on it would need a reason beyond "it
+    /// would be a nice API"; if an external caller ever needs an as-of
+    /// scratchpad read, that is a contract change to make deliberately.
+    pub(crate) async fn read_at(
+        &self,
+        k: &str,
+        as_of: Option<lunaris_core::Hlc>,
+    ) -> Result<Option<serde_json::Value>, LunarisError> {
         let source = self.scope_key(k);
 
         // Exact-key path (F40). One KV get on the source index, then one on the
         // episode. No embedding, no ranking, no top-k window — so this answers
         // correctly on a build with no usable embedder, which the ranked path
         // below cannot.
-        if let Some(id) = self.lookup_source_index(&source).await? {
+        if let Some(id) = self.lookup_source_index(&source, as_of).await? {
             // A hit here is authoritative for presence, but the episode row it
             // names can still be gone (a `forget` tombstones the episode and
             // does not sweep this sidecar). `recover_value` returning None then
             // means "deleted", and falling through to the ranked path would not
             // find it either — so return the None rather than re-searching.
-            return self.recover_value(&id).await;
+            return self.recover_value(&id, as_of).await;
         }
 
         // Fallback: entries written before this index existed have no sidecar,
@@ -185,8 +223,14 @@ impl WorkingMemory {
         // worked before — this is strictly additive.
         let filter =
             Filter::Eq { field: "source".into(), value: serde_json::Value::String(source) };
-        match self.find(k, filter).await?.into_iter().next() {
-            Some(h) => self.recover_value(&h.episode_id).await,
+        // F42 — `.next()` took the TOP-RANKED hit, which is not the same as
+        // the CURRENT one: all versions of a path stay indexed under the same
+        // `source`, so ranking could hand back a superseded body. Episode ids
+        // are ULIDs and ULIDs sort by mint time, so the greatest id IS the
+        // newest version — no extra read to find it.
+        match self.find(k, filter).await?.into_iter().max_by(|a, b| a.episode_id.cmp(&b.episode_id))
+        {
+            Some(h) => self.recover_value(&h.episode_id, as_of).await,
             None => Ok(None),
         }
     }
@@ -196,9 +240,17 @@ impl WorkingMemory {
     /// `Ok(None)` means the index has no entry — which is NOT the same as "the
     /// key does not exist", because entries written before the index existed
     /// have none. The caller falls back rather than concluding absence.
-    async fn lookup_source_index(&self, source: &str) -> Result<Option<Vec<u8>>, LunarisError> {
+    async fn lookup_source_index(
+        &self,
+        source: &str,
+        as_of: Option<lunaris_core::Hlc>,
+    ) -> Result<Option<Vec<u8>>, LunarisError> {
         let key = source_index_key(&self.scope, source);
-        let snapshot = HlcClock::new(0).tick();
+        // The sidecar is OVERWRITTEN per write, so reading IT as-of is what
+        // names the episode visible at `as_of` — on a backend that versions KV.
+        // On one that does not, this read is refused, which is the honest
+        // answer and the same one the caller got before F42.
+        let snapshot = as_of.unwrap_or_else(|| HlcClock::new(0).tick());
         match self.lunaris.storage().read_as_of(&self.scope, &key, snapshot).await {
             Ok(Some(row)) if row.value.len() == 16 => Ok(Some(row.value.to_vec())),
             // A row of the wrong width is corruption, not absence. Fall back to
@@ -245,7 +297,7 @@ impl WorkingMemory {
             if !seen.insert(h.episode_id.clone()) {
                 continue;
             }
-            if let Some(v) = self.recover_value(&h.episode_id).await? {
+            if let Some(v) = self.recover_value(&h.episode_id, None).await? {
                 out.push((h.source, v));
             }
         }
@@ -328,6 +380,7 @@ impl WorkingMemory {
     async fn recover_value(
         &self,
         episode_id: &[u8],
+        as_of: Option<lunaris_core::Hlc>,
     ) -> Result<Option<serde_json::Value>, LunarisError> {
         let bytes: [u8; 16] = match episode_id.try_into() {
             Ok(b) => b,
@@ -337,7 +390,7 @@ impl WorkingMemory {
         // Live snapshot — mirrors `lunaris_retrieve::hydrate`'s `as_of = None`
         // idiom (read the latest visible version without perturbing the engine
         // clock).
-        let snapshot = HlcClock::new(0).tick();
+        let snapshot = as_of.unwrap_or_else(|| HlcClock::new(0).tick());
         match self.lunaris.storage().read_as_of(&self.scope, &key, snapshot).await? {
             Some(row) => {
                 let episode: Episode = serde_json::from_slice(&row.value)
