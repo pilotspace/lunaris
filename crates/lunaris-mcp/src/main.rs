@@ -58,6 +58,7 @@ use lunaris_memory_service::{
     recall::{RecallParams, RecallResponse},
     record_decision::{RecordDecisionParams, RecordDecisionResponse},
     record_edit::{RecordEditParams, RecordEditResponse},
+    remember::{RememberParams, RememberResponse},
     resolve::{ResolveParams, ResolveResponse},
     scratchpad_consolidate::{ScratchpadConsolidateParams, ScratchpadConsolidateResponse},
     scratchpad_grep::{ScratchpadGrepParams, ScratchpadGrepResponse},
@@ -276,6 +277,33 @@ impl LunarisMcpServer {
     ) -> Result<Json<RecordDecisionResponse>, rmcp::ErrorData> {
         let req =
             MemoryRequest::RecordDecision { scope: self.state.scope.as_str().to_owned(), params };
+        decode_dto(self.proxy.dispatch(&self.state, req).await?)
+    }
+
+    /// Remember something worth keeping, in one of four kinds (W4.3b).
+    ///
+    /// Writes an Episode with `source = "<kind>:<scope>"` and metadata
+    /// `{"kind": "<kind>", "tags": [...]}`. The content is stored as readable
+    /// prose — the content, then `Why: <rationale>` on its own line — so a
+    /// memory reads correctly with no renderer in front of it.
+    #[tool(
+        name = "memory.remember",
+        description = "Remember something worth keeping as a durable memory. Use this on your own \
+                       judgement, whenever you learn something a future session would need and could not \
+                       re-derive from the code. `kind` is one of four: 'decision' (a choice and its \
+                       rationale), 'fix' (something that broke and what actually fixed it), 'preference' \
+                       (how this user wants to work), 'constraint' (project state or an invariant that \
+                       bounds future work). Always fill `why` when there is one — a fix without its cause \
+                       is a changelog line and a decision without its rationale gets re-litigated. The \
+                       source prefix enables targeted retrieval: pass filters.source_prefix='fix:' to \
+                       memory.recall to surface only fixes. Accepts optional dedupe_key so a retried step \
+                       does not double-write the lesson it already recorded."
+    )]
+    async fn remember(
+        &self,
+        Parameters(params): Parameters<RememberParams>,
+    ) -> Result<Json<RememberResponse>, rmcp::ErrorData> {
+        let req = MemoryRequest::Remember { scope: self.state.scope.as_str().to_owned(), params };
         decode_dto(self.proxy.dispatch(&self.state, req).await?)
     }
 

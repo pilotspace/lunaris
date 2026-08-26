@@ -51,7 +51,7 @@ the `cargo install --git` form above — plain `cargo install lunaris-mcp`
 
 ## Tool surface
 
-**16 tools** are registered (all implemented) — eight durable-memory tools,
+**17 tools** are registered (all implemented) — nine durable-memory tools,
 four working-memory (scratchpad) tools, and four curation tools:
 
 | Tool | Input | Returns |
@@ -60,6 +60,7 @@ four working-memory (scratchpad) tools, and four curation tools:
 | `memory.recall` | `query`, optional `k`, `filters`, `as_of` | `{ hits[] }` |
 | `memory.forget` | `target.source_prefix` **XOR** `target.episode_id`, optional `dry_run` (**defaults to `true`**) | `{ status, dry_run, matched, removed }` |
 | `memory.list_scopes` | _(none)_ | `{ scopes[] }` |
+| `memory.remember` | `kind` (`decision`\|`fix`\|`preference`\|`constraint`), `content`, optional `why`, `tags`, `dedupe_key` | `{ lsn, was_duplicate, source }` |
 | `memory.record_decision` | `decision`, `rationale`, optional `alternatives`, `tags`, `dedupe_key` | `{ lsn, was_duplicate }` |
 | `memory.record_edit` | `path`, `after`, optional `before`, `intent`, `dedupe_key` | `{ lsn, was_duplicate }` |
 | `memory.status` | _(none)_ | backend capability profile + MQ queue-depth probes |
@@ -193,7 +194,7 @@ docker run -d --name lunaris-moon -p 6381:6379 \
 ```
 
 `--shards 1` is mandatory — an ingest is one MULTI/EXEC transaction and a
-sharded Moon rejects it. All 16 tools work against Moon: native HNSW
+sharded Moon rejects it. All 17 tools work against Moon: native HNSW
 vector search, BM25 keyword fusion, graph, queues, and search-side bi-temporal
 reads. See
 [Running an external Moon](https://github.com/pilotspace/lunaris/blob/main/docs/operations/external-moon.md).
