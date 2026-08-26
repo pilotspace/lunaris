@@ -256,11 +256,22 @@ async fn the_ranked_fallback_returns_the_current_version_not_the_best_ranked_one
     // Mirrors `CodingSessionMemory::new`: `{HELIOS_PREFIX}{session_id}/`.
     let session_prefix = format!("helios:fs/{session}/");
 
-    // v1's body is stuffed with the path token so BM25/vector both favour it.
+    // BOTH bodies carry the query token, so both are retrievable on a
+    // BM25-only backend; v1 carries it five more times, so it outranks v2.
+    //
+    // The first draft gave v2 an unrelated body ("LIVE_V2_BODY totally
+    // unrelated wording"). That passed locally, where a real embedder's vector
+    // leg surfaced v2 anyway, and failed on CI, where the embedder is absent
+    // and the keyword leg is the only leg: v2 matched nothing, the fallback
+    // saw a one-element hit list, and `max_by` had only the stale version to
+    // choose from. The lesson is worth keeping in view — the ranked fallback
+    // can only pick the newest version the SEARCH SURFACED. It is a
+    // best-effort path for pre-F40 rows with no sidecar, not a guarantee; the
+    // guarantee is the source index that every write since F40 maintains.
     pad.write("recipe", "recipe recipe recipe STALE_V1_BODY recipe recipe")
         .await
         .expect("write v1");
-    pad.edit("recipe", "x", "LIVE_V2_BODY totally unrelated wording").await.expect("edit to v2");
+    pad.edit("recipe", "x", "recipe LIVE_V2_BODY").await.expect("edit to v2");
 
     // Drop the F40 sidecar so the read MUST take the ranked fallback. Same
     // shape `WorkingMemory` writes it in: `{session_prefix}{path}`.
@@ -276,6 +287,16 @@ async fn the_ranked_fallback_returns_the_current_version_not_the_best_ranked_one
         .await
         .expect("delete the source-index sidecar");
 
+    // The premise — v1 outranks v2 on term frequency, so rank order and
+    // version order disagree — is not probed here on purpose. `grep` filters
+    // `StartsWith(session_prefix)` while the fallback filters `Eq(source)`;
+    // they are different reads and `grep` returns nothing at all on a backend
+    // with no embedder, so it would report on a path this test does not take.
+    // The premise is verified the only way that generalises: by mutation,
+    // in the no-embedder configuration CI uses. Reverting `max_by` to
+    // `.next()` in `WorkingMemory::read_at` MUST make this test fail. If a
+    // future ranking change makes it pass under the mutant, the bodies need
+    // re-rigging, not the test deleting.
     let ts = lunaris.clock().tick();
     let got = pad
         .as_of(ts)
@@ -290,5 +311,5 @@ async fn the_ranked_fallback_returns_the_current_version_not_the_best_ranked_one
          Rank order is not version order — episode ids are ULIDs and ULIDs sort by mint time, \
          so the greatest id is the current version."
     );
-    assert_eq!(got, "LIVE_V2_BODY totally unrelated wording");
+    assert_eq!(got, "recipe LIVE_V2_BODY");
 }
