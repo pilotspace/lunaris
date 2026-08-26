@@ -46,6 +46,8 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use crate::scope::Scope;
 use crate::storage::types::Lsn;
 use crate::{StorageError, StoragePort};
@@ -212,14 +214,112 @@ impl Publisher for Arc<dyn StoragePort> {
 // publish_audit_event helper (fire-and-forget; tracing::warn! on failure)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Audit consumer (W4.6 / D6.3 — G2)
+// ---------------------------------------------------------------------------
+
+/// One decoded audit record, with the broker offset it was read at.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct AuditRecord {
+    /// Broker-assigned offset, monotonically increasing within a topic.
+    pub offset: u64,
+    pub event: AuditEvent,
+}
+
+/// The result of one [`read_audit_events`] call.
+#[derive(Clone, Debug, Default, PartialEq)]
+#[non_exhaustive]
+pub struct AuditPage {
+    /// Decoded records, oldest first.
+    pub records: Vec<AuditRecord>,
+    /// Entries that were in range but whose payload did not decode as an
+    /// [`AuditEvent`].
+    ///
+    /// Surfaced rather than silently skipped: an audit reader that quietly
+    /// drops what it cannot parse reports "no records" for a topic that has
+    /// them, which is the same failure the drop counter exists to prevent. A
+    /// non-zero value means the topic holds entries this build cannot read —
+    /// a foreign producer, or a format older than the current `AuditEvent`.
+    pub undecodable: usize,
+}
+
+/// Read a scope's audit trail over a closed time range. **Non-destructive** —
+/// see [`crate::StoragePort::queue_range`].
+///
+/// This is the consumer the D6 decision's G2 named as missing: before it,
+/// `grep` for a reader against [`AUDIT_TOPIC`] returned producers only, and a
+/// write-only audit log answers no governance question. "Who deleted this?" is
+/// exactly the query the trail exists to serve.
+///
+/// `from_ms` / `to_ms` are inclusive wall-clock milliseconds; `None` is
+/// unbounded on that side. Records come back oldest-first, capped at `limit`.
+///
+/// Reads only `scope`'s own topic. Since W4.6 that is also the only place
+/// `scope`'s events are written, so this cannot serve one tenant another
+/// tenant's history — the property that made the scope threading a hard
+/// prerequisite rather than a cleanup.
+pub async fn read_audit_events(
+    storage: &Arc<dyn StoragePort>,
+    scope: &Scope,
+    from_ms: Option<u64>,
+    to_ms: Option<u64>,
+    limit: usize,
+) -> Result<AuditPage, StorageError> {
+    let msgs = storage.queue_range(scope, AUDIT_TOPIC, 0, from_ms, to_ms, limit).await?;
+    let mut page = AuditPage { records: Vec::with_capacity(msgs.len()), undecodable: 0 };
+    for msg in msgs {
+        match serde_json::from_slice::<AuditEvent>(&msg.payload) {
+            Ok(event) => page.records.push(AuditRecord { offset: msg.offset, event }),
+            Err(e) => {
+                tracing::warn!(
+                    offset = msg.offset,
+                    err = %e,
+                    "audit entry did not decode as an AuditEvent; counted as undecodable"
+                );
+                page.undecodable += 1;
+            }
+        }
+    }
+    Ok(page)
+}
+
+// ---------------------------------------------------------------------------
+// Dropped-event counter (W4.6 / D6.3 — G3)
+// ---------------------------------------------------------------------------
+
+/// Process-wide count of audit events that were produced but never reached
+/// the broker.
+///
+/// `publish_audit_event` is fire-and-forget by blueprint §11: a broker hiccup
+/// must not roll back a user's committed `forget`. That is the right call, and
+/// it is also why "we have no record" and "it did not happen" were the same
+/// observable state — the D6 decision's G3. Fire-and-forget stays; the drop is
+/// now COUNTABLE, so an operator sees a gap rather than inferring one.
+///
+/// Deliberately a plain atomic in `lunaris-core` rather than a `prometheus`
+/// metric: core carries no metrics dependency, and the counter must increment
+/// on every surface — MCP, hook, CLI, HTTP — not only the one that happens to
+/// serve `/metrics`. `lunaris-server` mirrors it into
+/// `lunaris_audit_events_dropped_total` at scrape time.
+static AUDIT_EVENTS_DROPPED: AtomicU64 = AtomicU64::new(0);
+
+/// Read the process-wide dropped-audit-event count. Monotonic for the life of
+/// the process; never reset.
+pub fn audit_events_dropped() -> u64 {
+    AUDIT_EVENTS_DROPPED.load(Ordering::Relaxed)
+}
+
 /// Fire-and-forget audit publish. Mirrors the pre-refactor helper at
 /// `crates/lunaris/src/audit.rs:99-117` verbatim:
 ///
 /// 1. Try to serialize the event to JSON bytes.
-/// 2. On serialize failure: `tracing::warn!`, return `Ok(0)`.
-/// 3. On publish failure: `tracing::warn!`, return `Ok(0)` — **never**
-///    propagate. The caller's mutation already committed via `atomic_write`;
-///    an audit-channel hiccup must not roll back the user's write.
+/// 2. On serialize failure: bump [`audit_events_dropped`], `tracing::warn!`,
+///    return `Ok(0)`.
+/// 3. On publish failure: bump [`audit_events_dropped`], `tracing::warn!`,
+///    return `Ok(0)` — **never** propagate. The caller's mutation already
+///    committed via `atomic_write`; an audit-channel hiccup must not roll back
+///    the user's write.
 /// 4. On success: returns the broker-assigned offset.
 ///
 /// Returns `Ok(u64)` on both success AND soft-failure so existing callers
@@ -233,6 +333,7 @@ pub async fn publish_audit_event<P: Publisher + ?Sized>(
     let payload = match serde_json::to_vec(&event) {
         Ok(b) => b,
         Err(e) => {
+            AUDIT_EVENTS_DROPPED.fetch_add(1, Ordering::Relaxed);
             tracing::warn!(err = %e, "audit serialize failed; skipping audit publish");
             return Ok(0);
         }
@@ -240,6 +341,7 @@ pub async fn publish_audit_event<P: Publisher + ?Sized>(
     match publisher.publish(scope, AUDIT_TOPIC, 0, payload.into()).await {
         Ok(offset) => Ok(offset),
         Err(e) => {
+            AUDIT_EVENTS_DROPPED.fetch_add(1, Ordering::Relaxed);
             tracing::warn!(
                 err = %e,
                 "audit publish failed; caller mutation still succeeded"
@@ -302,6 +404,69 @@ mod tests {
         assert_eq!(inbox[0].1, AUDIT_TOPIC);
         let decoded: AuditEvent = serde_json::from_slice(&inbox[0].3).unwrap();
         assert_eq!(decoded, event);
+    }
+
+    /// A publisher that always fails, so the soft-failure branch is reachable.
+    struct FailingPublisher;
+    #[async_trait]
+    impl Publisher for FailingPublisher {
+        async fn publish(
+            &self,
+            _scope: &Scope,
+            _topic: &str,
+            _partition: u16,
+            _payload: Bytes,
+        ) -> Result<u64, PublishError> {
+            Err(PublishError::Backend("broker down".into()))
+        }
+    }
+
+    /// W4.6 / D6.3 — G3: a dropped audit event must be COUNTABLE.
+    ///
+    /// Fire-and-forget stays — the assertion below pins that a broker failure
+    /// still returns `Ok(0)` and never propagates, because the caller's
+    /// mutation has already committed. What changes is that the loss stops
+    /// being invisible: "we have no record" and "it did not happen" were the
+    /// same observable state before this counter existed.
+    ///
+    /// Both cases live in ONE test on purpose. The counter is process-global
+    /// and this module's tests run in parallel, so a second test touching it
+    /// would make both flaky. Deltas rather than absolutes for the same
+    /// reason.
+    #[tokio::test]
+    async fn a_dropped_audit_event_is_counted_and_a_delivered_one_is_not() {
+        let event = AuditEvent::Forget(ForgetReceiptData {
+            target: ForgetTargetData::Scope(ScopeSpecData::BySource("x".into())),
+            indices_affected: vec![IndexKindData::Kv],
+            rows_written: 1,
+            rows_deleted: 0,
+            audit_lsn: Lsn { wall_ms: 1, counter: 0 },
+            preview: false,
+        });
+        let scope = Scope::new("tenant-a").unwrap();
+
+        let before = audit_events_dropped();
+        let off = publish_audit_event(&FailingPublisher, &scope, event.clone())
+            .await
+            .expect("a broker failure must NOT propagate — the caller's write already committed");
+        assert_eq!(off, 0, "a dropped event has no broker offset");
+        assert_eq!(
+            audit_events_dropped(),
+            before + 1,
+            "a publish that never reached the broker was not counted, so the gap is invisible \
+             to an operator — which is exactly the G3 defect this counter closes"
+        );
+
+        // And the counter must not fire on the happy path, or it measures
+        // traffic instead of loss.
+        let ok_pub = CapturePublisher::new();
+        let after_drop = audit_events_dropped();
+        publish_audit_event(&ok_pub, &scope, event).await.expect("delivered publish");
+        assert_eq!(
+            audit_events_dropped(),
+            after_drop,
+            "a DELIVERED event incremented the drop counter"
+        );
     }
 
     #[test]

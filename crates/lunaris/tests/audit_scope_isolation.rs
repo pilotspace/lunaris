@@ -149,3 +149,64 @@ async fn a_forget_receipt_is_audited_under_the_scope_that_produced_it() {
         "scope A's audit topic carried something other than the forget receipt: {json}"
     );
 }
+
+/// W4.6 / D6.3 — G2: the trail can be READ back, by the scope that owns it.
+///
+/// The D6 decision found `grep` for a consumer against `AUDIT_TOPIC` returned
+/// producers only. A write-only audit log answers no governance question:
+/// "who deleted this?" is exactly the query it exists to serve. This drives
+/// the reader end to end — forget under a real scope, then read that scope's
+/// own trail back and find the receipt in it.
+#[tokio::test]
+async fn a_scope_can_read_its_own_audit_trail_back() {
+    let Some(url) = moon_url() else { return };
+
+    let lunaris = Arc::new(Lunaris::open(&url).await.expect("open"));
+    let scope_a = Scope::new(format!("w46r{}", ulid::Ulid::new())).expect("scope a");
+    let scope_b = Scope::new(format!("w46s{}", ulid::Ulid::new())).expect("scope b");
+
+    let request = ForgetTarget::Scope(ScopeSpec::BySource("w46/read-back".into())).dry_run();
+    lunaris.scoped(scope_a.clone()).forget(request).await.expect("dry-run forget");
+
+    let page = lunaris
+        .scoped(scope_a.clone())
+        .audit_events(None, None, 100)
+        .await
+        .expect("reading a scope's own audit trail must succeed");
+    assert_eq!(page.undecodable, 0, "an entry in scope A's trail did not decode as an AuditEvent");
+    assert!(
+        page.records.iter().any(|r| matches!(r.event, lunaris_core::audit::AuditEvent::Forget(_))),
+        "scope A's forget receipt is not in scope A's own audit trail; got {} record(s): {:?}",
+        page.records.len(),
+        page.records
+    );
+
+    // An uninvolved scope reads its own empty trail, not A's. This is the
+    // property the scope threading bought: a reader over the old
+    // `Scope::dev()`-for-everyone publish would have handed B every tenant's
+    // receipts.
+    let b_page = lunaris
+        .scoped(scope_b.clone())
+        .audit_events(None, None, 100)
+        .await
+        .expect("reading an uninvolved scope's trail must succeed, not error");
+    assert!(
+        b_page.records.is_empty(),
+        "an uninvolved scope read {} record(s) it did not produce: {:?}",
+        b_page.records.len(),
+        b_page.records
+    );
+
+    // The read must be NON-DESTRUCTIVE — an operator running the same query
+    // twice, or a background subscriber on the same topic, must still see the
+    // events. `subscribe` would have popped and acked them.
+    let again =
+        lunaris.scoped(scope_a.clone()).audit_events(None, None, 100).await.expect("second read");
+    assert_eq!(
+        again.records.len(),
+        page.records.len(),
+        "the audit read consumed the trail: a second read returned {} of {} records",
+        again.records.len(),
+        page.records.len()
+    );
+}

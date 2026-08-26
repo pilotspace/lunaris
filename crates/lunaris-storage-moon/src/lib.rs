@@ -407,6 +407,22 @@ impl StoragePort for MoonStorage {
         crate::queue::queue_length(&self.client, scope, topic, partition).await
     }
 
+    /// W4.6 / D6.3 — non-destructive range read; see
+    /// [`crate::queue::queue_range`] for why this is `XRANGE` and not the MQ
+    /// consumer surface.
+    async fn queue_range(
+        &self,
+        scope: &Scope,
+        topic: &str,
+        partition: u16,
+        from_ms: Option<u64>,
+        to_ms: Option<u64>,
+        limit: usize,
+    ) -> Result<Vec<QueueMsg>, StorageError> {
+        crate::queue::queue_range(&self.client, scope, topic, partition, from_ms, to_ms, limit)
+            .await
+    }
+
     /// Cross-scope enumeration via `SCAN MATCH lunaris:*` + key parse.
     /// Q-U2 lock — lazy SCAN-derived. See `crate::scopes` for the cursor
     /// model and the Moon-SCAN-cursor vs scope-string-cursor tradeoff.

@@ -144,6 +144,76 @@ pub(crate) async fn queue_length(
     Ok(n.max(0) as u64)
 }
 
+/// W4.6 / D6.3 — non-destructive range read over a topic's stream.
+///
+/// `XRANGE`, not `MQ POP`. The MQ surface is a consumer: it claims entries,
+/// advances `last_delivered_id`, and this module ACKs them before yielding, so
+/// reading an audit trail through it would consume the trail. `XRANGE` reads
+/// the stream directly and mutates nothing, so an operator can run the same
+/// query twice and a background subscriber on the same topic never notices.
+///
+/// This is the second raw RESP command in this module, for the same reason as
+/// the first: the frozen `MqClient` contract forbids raw `MQ` invocations
+/// specifically, and this is a stream command with no `MqClient` equivalent —
+/// reaching past the MQ surface is the whole point.
+///
+/// Stream ids are `<ms>-<seq>`, so the wall-clock bounds map onto the id space
+/// directly: `from_ms` becomes `<ms>-0` and `to_ms` becomes `<ms>-` plus the
+/// maximum sequence, both inclusive. An absent bound becomes `-` / `+`.
+pub(crate) async fn queue_range(
+    c: &MoonClient,
+    scope: &Scope,
+    topic: &str,
+    _partition: u16,
+    from_ms: Option<u64>,
+    to_ms: Option<u64>,
+    limit: usize,
+) -> Result<Vec<QueueMsg>, StorageError> {
+    let scoped_topic = mq_topic(scope, topic);
+    let start = from_ms.map(|ms| format!("{ms}-0")).unwrap_or_else(|| "-".to_string());
+    let end = to_ms.map(|ms| format!("{ms}-{}", u64::MAX)).unwrap_or_else(|| "+".to_string());
+
+    let mut typed = c.typed();
+    let reply: redis::Value = redis::cmd("XRANGE")
+        .arg(&scoped_topic)
+        .arg(&start)
+        .arg(&end)
+        .arg("COUNT")
+        .arg(limit)
+        .query_async(typed.inner_mut())
+        .await
+        // `query_async` yields a raw `redis::RedisError`, not a `MoonError` —
+        // this is a raw stream command, not an `MqClient` call.
+        .map_err(crate::client::redis_err)?;
+
+    let redis::Value::Array(rows) = reply else {
+        // A topic that has never been written to is an empty read, not an
+        // error — same disposition `queue_length` takes.
+        return Ok(Vec::new());
+    };
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let redis::Value::Array(pair) = row else { continue };
+        let mut pair = pair.into_iter();
+        let Some(id) = pair.next().and_then(|v| redis_string(&v)) else { continue };
+        // Contract v1 wire shape: `body <bytes>`. A legacy entry with no
+        // `body` reads as EMPTY rather than wedging the range, exactly as the
+        // poll and reclaim paths treat it.
+        let payload = match pair.next() {
+            Some(redis::Value::Array(fields)) => field_value(fields, b"body"),
+            _ => Bytes::new(),
+        };
+        out.push(QueueMsg {
+            topic: topic.to_string(),
+            partition: _partition,
+            offset: stream_id_to_offset(&id),
+            payload,
+        });
+    }
+    Ok(out)
+}
+
 /// The consumer group and consumer `MQ` uses internally
 /// (`vendor/moon/src/shard/mq_exec.rs`). The reclaim sweep has to name them
 /// explicitly because it bypasses the MQ surface to read that group's PEL.

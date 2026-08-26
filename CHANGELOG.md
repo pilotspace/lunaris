@@ -5,6 +5,40 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
 
 ## [Unreleased]
 
+### Added
+
+- **The audit trail can be read back (W4.6, D6.3 — G2).**
+  `ScopedLunaris::audit_events(from_ms, to_ms, limit)` returns an `AuditPage`
+  of decoded `AuditEvent`s from the bound scope's own trail. Before it, a
+  `grep` for a consumer against `__lunaris_audit__` returned producers only —
+  every surface wrote events and nothing read them, so "who deleted this?",
+  the question the trail exists to answer, had no answer.
+
+  The read is **non-destructive**. `subscribe` is a consumer: it pops, acks,
+  and hands each entry over exactly once, so reading a trail through it would
+  destroy the trail and a second reader would find nothing. This goes over the
+  underlying stream instead, mutating nothing, so an operator can run the same
+  query repeatedly and a background subscriber on the same topic is
+  unaffected. New additive `StoragePort::queue_range` method (default
+  `NotSupported`, same contract as `queue_depth`), implemented by the Moon
+  backend.
+
+  Entries that fail to decode are counted in `AuditPage::undecodable` rather
+  than skipped in silence — a reader that quietly drops what it cannot parse
+  reports "no records" for a topic that has them.
+
+- **Dropped audit events are countable (W4.6, D6.3 — G3).**
+  `lunaris_core::audit::audit_events_dropped()` counts every audit event that
+  was produced but never reached the broker, and `lunaris-server` exports it
+  as `lunaris_audit_events_dropped_total` on `/metrics`.
+
+  Fire-and-forget is unchanged and deliberate — a broker hiccup must not roll
+  back a `forget` that already committed. What changes is that the loss stops
+  being invisible: "we have no record" and "it did not happen" were the same
+  observable state. The counter lives in `lunaris-core` as a plain atomic
+  rather than a prometheus metric, because core carries no metrics dependency
+  and the drop happens on every surface (MCP, hook, CLI, HTTP), not only the
+  one that serves `/metrics`; the server mirrors it in at scrape time.
 ### Fixed
 
 - **The scratchpad's time-travel read returned rewritten, stale, or no content

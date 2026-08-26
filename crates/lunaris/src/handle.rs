@@ -1274,6 +1274,45 @@ impl<'a> ScopedLunaris<'a> {
         self.engine.recall().with_scope(self.scope.clone()).execute(query).await
     }
 
+    /// Read this scope's audit trail over a closed time range.
+    ///
+    /// W4.6 / D6.3. Until now the audit log was write-only: every producer
+    /// published to `__lunaris_audit__` and nothing in the repo read it back,
+    /// so "who deleted this?" — the question the trail exists to answer — had
+    /// no answer. This is the consumer.
+    ///
+    /// **Non-destructive.** It does not pop, ack, or advance any consumer
+    /// group, so it can be run repeatedly and a background subscriber on the
+    /// same topic is unaffected.
+    ///
+    /// **Reads only this scope's own topic**, which since W4.6 is also the
+    /// only place this scope's events are written. That ordering was not
+    /// optional: a reader built on the previous `Scope::dev()`-for-everyone
+    /// publish would have served one tenant another tenant's history.
+    ///
+    /// `from_ms` / `to_ms` are inclusive wall-clock milliseconds, `None`
+    /// unbounded. Records come back oldest-first, capped at `limit`. Entries
+    /// that fail to decode are counted in [`AuditPage::undecodable`] rather
+    /// than silently skipped.
+    ///
+    /// Returns `StorageError::NotSupported` on a backend with no range read.
+    pub async fn audit_events(
+        &self,
+        from_ms: Option<u64>,
+        to_ms: Option<u64>,
+        limit: usize,
+    ) -> Result<lunaris_core::audit::AuditPage, LunarisError> {
+        lunaris_core::audit::read_audit_events(
+            &self.engine.storage,
+            &self.scope,
+            from_ms,
+            to_ms,
+            limit,
+        )
+        .await
+        .map_err(LunarisError::Storage)
+    }
+
     /// Forget primitive bound to the wrapper's scope — the canonical entry
     /// point superseding the deprecated [`Lunaris::forget`].
     ///

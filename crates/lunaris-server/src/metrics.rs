@@ -83,6 +83,13 @@ pub struct Metrics {
     pub http_shed_total: IntCounter,
     /// 0.6.2 P0-2 — requests cut off by `--http-timeout-secs` (`408`).
     pub http_timeout_total: IntCounter,
+    /// W4.6 / D6.3 — mirror of `lunaris_core::audit::audit_events_dropped`,
+    /// synced from that atomic on each scrape by
+    /// [`sync_audit_drops`]. Not incremented at the drop site: the drop
+    /// happens in `lunaris-core`, which carries no metrics dependency and is
+    /// reached from every surface (MCP, hook, CLI, HTTP), not only the one
+    /// serving `/metrics`.
+    pub audit_events_dropped_total: IntCounter,
     /// 0.6.2 P0-3 — `1` when the last `/readyz` probe passed every check,
     /// `0` otherwise. Alert on `lunaris_ready == 0` for longer than one
     /// readiness period: it means the backend PINGs but cannot serve.
@@ -173,6 +180,13 @@ pub fn metrics() -> &'static Metrics {
             "Requests cut off by the --http-timeout-secs budget (408)"
         )
         .expect("register lunaris_http_timeout_total"),
+        audit_events_dropped_total: register_int_counter!(
+            "lunaris_audit_events_dropped_total",
+            "Audit events produced but never delivered to the broker (serialize or publish \
+             failure). Fire-and-forget by design — a broker hiccup must not roll back a \
+             committed write — so a non-zero value means an audit gap, not a failed request"
+        )
+        .expect("register lunaris_audit_events_dropped_total"),
         ready: register_int_gauge!(
             "lunaris_ready",
             "1 when the last /readyz probe passed storage PING + write canary + embedder \
@@ -180,6 +194,20 @@ pub fn metrics() -> &'static Metrics {
         )
         .expect("register lunaris_ready"),
     })
+}
+
+/// Pull `lunaris-core`'s process-wide dropped-audit-event count into the
+/// prometheus counter. Call immediately before `prometheus::gather()`.
+///
+/// The core counter is monotonic and the prometheus one only moves forward, so
+/// the sync is the difference between them. `saturating_sub` covers the one
+/// case that would otherwise underflow: a test registry reset leaving the
+/// exported value above the core value.
+pub fn sync_audit_drops() {
+    let m = metrics();
+    let core = lunaris_core::audit::audit_events_dropped();
+    let exported = m.audit_events_dropped_total.get() as u64;
+    m.audit_events_dropped_total.inc_by(core.saturating_sub(exported));
 }
 
 /// Map a [`lunaris_core::LunarisError`] variant to its bounded `kind` label
@@ -255,6 +283,68 @@ mod tests {
         ] {
             assert!(out.contains(name), "metrics text format must contain {name}; got:\n{out}");
         }
+    }
+
+    /// W4.6 / D6.3 — the drop counter must actually reach a scraper.
+    ///
+    /// Counting a drop in `lunaris-core` and never exporting it leaves the
+    /// operator exactly where G3 left them. This asserts the sync moves the
+    /// exported series to match the core atomic, and that the series name
+    /// appears in the text format a Prometheus scraper reads.
+    #[tokio::test]
+    async fn the_core_drop_count_reaches_the_exported_series() {
+        use lunaris_core::Scope;
+        use lunaris_core::audit::{
+            AuditEvent, ForgetReceiptData, ForgetTargetData, IndexKindData, PublishError,
+            Publisher, ScopeSpecData, publish_audit_event,
+        };
+        use lunaris_core::storage::types::Lsn;
+
+        struct FailingPublisher;
+        #[async_trait::async_trait]
+        impl Publisher for FailingPublisher {
+            async fn publish(
+                &self,
+                _scope: &Scope,
+                _topic: &str,
+                _partition: u16,
+                _payload: bytes::Bytes,
+            ) -> Result<u64, PublishError> {
+                Err(PublishError::Backend("broker down".into()))
+            }
+        }
+
+        let m = metrics();
+        sync_audit_drops();
+        let exported_before = m.audit_events_dropped_total.get();
+
+        let event = AuditEvent::Forget(ForgetReceiptData {
+            target: ForgetTargetData::Scope(ScopeSpecData::BySource("x".into())),
+            indices_affected: vec![IndexKindData::Kv],
+            rows_written: 1,
+            rows_deleted: 0,
+            audit_lsn: Lsn { wall_ms: 1, counter: 0 },
+            preview: false,
+        });
+        publish_audit_event(&FailingPublisher, &Scope::new("tenant-a").unwrap(), event)
+            .await
+            .expect("fire-and-forget must not propagate");
+
+        sync_audit_drops();
+        assert!(
+            m.audit_events_dropped_total.get() > exported_before,
+            "a dropped audit event did not move the exported series ({exported_before} -> {}), \
+             so the gap stays invisible to a scraper",
+            m.audit_events_dropped_total.get()
+        );
+
+        let mut buf = Vec::new();
+        TextEncoder::new().encode(&prometheus::gather(), &mut buf).expect("encode");
+        let out = String::from_utf8(buf).expect("utf8");
+        assert!(
+            out.contains("lunaris_audit_events_dropped_total"),
+            "the drop counter is missing from the text format a scraper reads"
+        );
     }
 
     #[test]

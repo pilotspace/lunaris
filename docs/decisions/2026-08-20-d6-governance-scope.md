@@ -66,7 +66,7 @@ Wave 1E note, but for a different item — `Lunaris::recall`'s queue-depth healt
 check. The audit-publish debt had no entry anywhere. A marker that names a
 tracking location is only as good as the entry it names.
 
-### G2 — nothing reads the events back
+### G2 — nothing reads the events back — **CLOSED (W4.6, 0.7.0)**
 
 `grep` for a consumer against `AUDIT_TOPIC` returns **producers only**. Nothing
 in this repo consumes what is published. A write-only audit log answers no
@@ -93,7 +93,7 @@ that deferral comes due.
 written into. Building a writer and deferring the reader is a recurring failure
 mode here, and worth naming as one.)
 
-### G3 — audit loss is silent by contract
+### G3 — audit loss is silent by contract — **CLOSED (W4.6, 0.7.0)**
 
 `publish_audit_event` is fire-and-forget per blueprint §11: serialize failure
 and publish failure both `tracing::warn!` and return `Ok(0)`.
