@@ -162,6 +162,25 @@ the 25 ms p50 recall contract.
 > with, and both arms of an A/B must run with the same one. It is also the
 > first thing to check when recall ordering looks inexplicable in production.
 
+**How much the boost is worth, and for how long.** The prior is additive on a
+hit's fused score, bounded by `BOOST_CAP` (0.30, an asymptote — not a value any
+real record reaches), and it decays with the age of the memory's most recent
+reference. Measured for a memory referenced ten times (`weighted = 30`):
+
+| age since last reference | 10s | 1 min | 10 min | 1 h | 6 h | 1 day | 7 days |
+|---|---|---|---|---|---|---|---|
+| boost added to score | 0.204 | 0.183 | 0.155 | 0.133 | 0.111 | 0.096 | 0.076 |
+
+A memory that was **never** referenced gets exactly `0.0` — the ledger only ever
+promotes, never demotes, so an unreferenced memory keeps its raw hybrid rank.
+
+> Before v0.7.2 this curve clamped negative ACT-R activation to zero, which made
+> the prior read exactly `0.0` for any memory older than `weighted²` seconds — 9
+> seconds after a single strong reference, 15 minutes after ten. If you are
+> reading recall traces from an older build, the boost column is expected to be
+> zero almost everywhere; that was a defect (F43), not a tuning choice.
+
+
 
 > The llama.cpp granite-r2 embedder and bge-reranker-v2-m3 reranker are
 > selected unconditionally when the `llamacpp` feature is on (default) —

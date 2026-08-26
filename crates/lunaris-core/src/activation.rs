@@ -344,10 +344,7 @@ mod tests {
             let light = prior_ladder(3.0);
             let h = heavy.iter().find(|(s, _)| *s == secs).unwrap().1;
             let l = light.iter().find(|(s, _)| *s == secs).unwrap().1;
-            assert!(
-                h > l,
-                "at {secs}s: 50 strong refs ({h}) must outrank 1 strong ref ({l})"
-            );
+            assert!(h > l, "at {secs}s: 50 strong refs ({h}) must outrank 1 strong ref ({l})");
         }
     }
 
