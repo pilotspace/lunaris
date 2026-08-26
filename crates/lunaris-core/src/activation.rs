@@ -61,9 +61,24 @@ pub const WEIGHT_STRONG: f64 = 3.0;
 /// baseline, only toward it.
 pub const WEIGHT_STRONG_NEGATIVE: f64 = -3.0;
 
-/// Slope of the boost-prior curve — `k` in `k * ln(1 + activation)`. Tuned
-/// so the maximum prior stays on the same scale as the existing Phase-14.2
-/// `BOOST_DELTA` (0.25) rather than swamping cosine similarity scores.
+/// Midpoint of the boost curve, in ACT-R activation units: an activation of
+/// exactly `BOOST_MIDPOINT` earns half of [`BOOST_CAP`]. Zero is the natural
+/// choice — it is the point where a record's weighted reference sum exactly
+/// offsets its decay (`weighted == elapsed^decay`).
+pub const BOOST_MIDPOINT: f64 = 0.0;
+
+/// Width of the boost curve, in ACT-R activation units (a natural-log scale,
+/// so `3.0` spans roughly a 20x swing in `weighted * elapsed^-decay` per
+/// unit). Larger = flatter; this is the tuning dial, and retuning it is
+/// benchmark-gated (F43).
+pub const BOOST_SCALE: f64 = 3.0;
+
+/// F43 — RETIRED. Was the slope `k` in the old `k * ln(1 + activation)`
+/// curve, which clamped negative activation to zero and so produced exactly
+/// 0.0 for every memory older than `weighted^2` seconds. Kept as a public
+/// constant so the crate's surface does not shrink; nothing reads it.
+#[deprecated(note = "F43: superseded by BOOST_MIDPOINT / BOOST_SCALE; the \
+                     k * ln(1 + a) curve made the prior inert in production")]
 pub const BOOST_K: f32 = 0.1;
 /// Hard cap on the boost prior added to a hit's score, regardless of how
 /// large the underlying activation grows.
@@ -202,15 +217,48 @@ fn weight_for(s: Strength) -> f64 {
 }
 
 /// Convert a raw recomputed `activation` value into the additive post-hydrate
-/// boost prior: `min(BOOST_CAP, BOOST_K * ln(1 + max(activation, 0)))`.
+/// boost prior: `BOOST_CAP * logistic((activation - BOOST_MIDPOINT) / BOOST_SCALE)`.
 ///
-/// Negative activation (a very stale or barely-referenced record) clamps to
-/// a ZERO contribution — this is a PRIOR that is added to a hit's score, it
-/// never subtracts. The result is always in `[0.0, BOOST_CAP]`.
+/// The result is always in `[0.0, BOOST_CAP]`, strictly increasing in
+/// `activation`, and — this is the part that matters — non-zero across the
+/// whole range a real memory occupies.
+///
+/// **F43.** This used to be `min(BOOST_CAP, BOOST_K * ln(1 + max(activation, 0)))`.
+/// In ACT-R, base-level activation is normally NEGATIVE (the retrieval
+/// threshold is negative too), so clamping negatives to zero collapsed the
+/// entire operating range onto a single value. `activation` is
+/// `ln(weighted * elapsed^-decay)` with `elapsed` in SECONDS, which turns
+/// negative the moment `elapsed > weighted^decay_recip` — a cliff at
+/// `weighted^2` seconds for the default decay of 0.5. Ten strong references
+/// bought 15 minutes of prior and nothing afterward; `BOOST_CAP` required a
+/// weighted sum of 1.944e8 and was never approached. Measured before and
+/// after, ten strong refs (`weighted = 30`):
+///
+/// | age   |    10s |   1min |  10min |     1h |     6h |     1d |     7d |
+/// |-------|--------|--------|--------|--------|--------|--------|--------|
+/// | old   | 0.1179 | 0.0856 | 0.0185 | 0.0000 | 0.0000 | 0.0000 | 0.0000 |
+/// | new   | 0.2038 | 0.1833 | 0.1551 | 0.1327 | 0.1112 | 0.0955 | 0.0758 |
+///
+/// A logistic is the minimal shape that fixes it: it is defined and monotone
+/// over all of `(-inf, +inf)`, so no clamp is needed and no operating range
+/// is privileged. The two boundaries are exact rather than approximate —
+/// `-inf` maps to exactly `0.0` and `+inf` to exactly `BOOST_CAP` — which is
+/// what keeps a NEVER-referenced memory (`weighted == 0.0`, so
+/// `activation == -inf`) scoring exactly zero. That invariant is why the
+/// defect could not be fixed by simply lifting the floor.
+///
+/// `BOOST_CAP` remains an ASYMPTOTE, not a reachable value, so the ceiling
+/// this curve shares with the old one is a true bound in both.
 pub fn boost_prior(activation: f64) -> f32 {
-    let clamped = activation.max(0.0);
-    let raw = (BOOST_K as f64) * (1.0 + clamped).ln();
-    raw.clamp(0.0, BOOST_CAP as f64) as f32
+    // A corrupt ledger record must never poison the ranking. The old
+    // `.max(0.0)` swallowed NaN by accident — Rust's `f64::max` returns the
+    // non-NaN operand — so this now happens on purpose.
+    if activation.is_nan() {
+        return 0.0;
+    }
+    let z = (activation - BOOST_MIDPOINT) / BOOST_SCALE;
+    let logistic = 1.0 / (1.0 + (-z).exp());
+    ((BOOST_CAP as f64) * logistic).clamp(0.0, BOOST_CAP as f64) as f32
 }
 
 #[cfg(test)]
@@ -225,10 +273,23 @@ mod tests {
         assert_eq!(r.v, 1);
     }
 
+    /// F43 — CONTRACT CORRECTION, not a weakened check. This test used to
+    /// assert `boost_prior(-5.0) == 0.0` and `boost_prior(0.0) == 0.0`, which
+    /// is precisely the behaviour that made the prior inert: negative
+    /// activation is the NORMAL ACT-R range, not an error state, and a
+    /// weighted sum that exactly offsets its own decay (activation 0.0) is a
+    /// mid-strength memory rather than a worthless one. Zero is now reserved
+    /// for the one case that means it: never referenced at all.
     #[test]
-    fn boost_prior_is_zero_for_nonpositive_activation() {
-        assert_eq!(boost_prior(-5.0), 0.0);
-        assert_eq!(boost_prior(0.0), 0.0);
+    fn boost_prior_reserves_zero_for_never_referenced() {
+        assert_eq!(boost_prior(f64::NEG_INFINITY), 0.0, "never referenced");
+        assert!(boost_prior(-5.0) > 0.0, "a stale but real memory is not nothing");
+        assert_eq!(
+            boost_prior(BOOST_MIDPOINT),
+            BOOST_CAP / 2.0,
+            "the midpoint earns exactly half the cap"
+        );
+        assert!(boost_prior(-5.0) < boost_prior(BOOST_MIDPOINT), "strictly increasing");
     }
 
     // ── F43 — the activation prior is inert in production ──────────────

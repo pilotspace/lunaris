@@ -568,6 +568,81 @@ mod tests {
         );
     }
 
+    /// F43 — the guard the test above CANNOT be: it records references and
+    /// recalls within the same second, so it is green whether or not the
+    /// prior survives any age at all. Under the pre-F43 curve the prior fell
+    /// to exactly 0.0 once `elapsed > weighted^2` seconds — 36s for that
+    /// test's two strong refs — so the feature was wired, tested, and inert.
+    ///
+    /// This writes the ledger row DIRECTLY with a backdated `last_ref_wall`
+    /// (there is no timestamp seam on `record_activation_refs` — it stamps
+    /// `SystemTime::now()`), giving a memory referenced ten times a WEEK ago.
+    /// It must still outrank its equal-similarity peer. Reverting
+    /// `boost_prior` to the clamped curve reds this and leaves the test above
+    /// green, which is the whole point of having both.
+    #[tokio::test]
+    async fn activation_boost_survives_a_week_of_age() {
+        use lunaris_core::activation::{ActivationRecord, Grain, Strength};
+        use lunaris_core::keyspace::activation_key;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let (lunaris, scope, storage) =
+            make_client_side_fusion_engine("test-recall-actboost-aged").await;
+        let scoped = lunaris.scoped(scope.clone());
+
+        for _ in 0..2 {
+            scoped
+                .ingest(EpisodeBuilder::new("test/src", "granite embedding activation corpus"))
+                .await
+                .unwrap();
+        }
+
+        let params = || RecallParams {
+            query: "granite activation corpus".into(),
+            k: 2,
+            filters: None,
+            as_of: None,
+            raw: false,
+        };
+        let base = handle(&lunaris, &scope, params()).await.unwrap();
+        assert_eq!(base.hits.len(), 2, "need both equal-similarity hits: {base:?}");
+        let loser = base.hits[1].episode_id.clone();
+        let id = ulid::Ulid::from_string(&loser).unwrap();
+
+        // Ten strong references, last of them a WEEK ago.
+        const WEEK_SECS: u64 = 7 * 24 * 60 * 60;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let aged = ActivationRecord {
+            n: 10,
+            weighted: 30.0, // 10 * WEIGHT_STRONG
+            first_ref_wall: now - WEEK_SECS,
+            last_ref_wall: now - WEEK_SECS,
+            last_grain: Grain::Turn,
+            last_strength: Strength::Strong,
+            v: 1,
+            archived_at: None,
+        };
+        storage
+            .port()
+            .atomic_write(
+                &scope,
+                &[lunaris_core::WriteOp::KvPut {
+                    key: activation_key(&scope, id),
+                    value: serde_json::to_vec(&aged).unwrap(),
+                }],
+            )
+            .await
+            .unwrap();
+
+        let after = handle(&lunaris, &scope, params()).await.unwrap();
+        assert_eq!(
+            after.hits[0].episode_id, loser,
+            "a memory referenced 10x a WEEK ago must still outrank its \
+             equal-similarity peer; a prior that decays to exactly zero is \
+             indistinguishable from no ledger at all: {after:?}"
+        );
+    }
+
     /// ADD task recall-llm-snippets (FROZEN @ v1): default hit content is the
     /// curated LLM-ready summary, never the raw JSON envelope.
     #[tokio::test]
