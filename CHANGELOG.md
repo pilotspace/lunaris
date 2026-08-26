@@ -36,8 +36,10 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
   - **Any saved recall baseline or ordering snapshot taken on that path needs
     re-taking.** A diff against an older baseline is expected, not a
     regression.
-  - HTTP `/v1/recall` and the Rust/Python/TypeScript SDKs are **unaffected** —
-    they never applied the prior (tracked as W1.8).
+  - HTTP `/v1/recall` and the Rust/Python/TypeScript SDKs **are affected too**
+    as of W1.8 (below), which moved the wiring to the one recall-builder
+    construction site every surface goes through. In the same release they go
+    from never applying the prior to applying the corrected one.
   - `LUNARIS_ACTIVATION_BOOST=0` remains the supported opt-out and is itself
     unchanged: it removes the boost provider entirely, so no prior is applied
     at all. Note it is **not** a rollback to the previous *on* behaviour — the
@@ -58,6 +60,38 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
   *At release: this entry needs a corresponding note in the version's
   `docs/migration/` guide — it changes observable ordering for existing
   deployments.*
+
+- **The activation prior now applies on every recall surface, not just
+  `lunaris-memory-service` (W1.8).** The SDK has shipped
+  `ScopedLunaris::record_activation_refs` — a public method for writing
+  reinforcement signals — since the activation-ledger task. Its read half was
+  wired in exactly one place, `lunaris-memory-service`, so an SDK, HTTP or
+  hook caller could write reinforcement signals that its own recall would
+  never read back. That is a write half with no read half, not a defaults
+  preference, so the wiring moved to the single recall-builder construction
+  site (`crates/lunaris/src/recall.rs`) that every surface reaches through
+  `dsl()`.
+
+  - Newly affected: HTTP `/v1/recall`, the Rust/Python/TypeScript SDKs, and
+    hook context injection. Their ordering now favours previously-referenced
+    memories, exactly as MCP `memory.recall` already did.
+  - Unchanged in behaviour, changed in location: MCP, contextd and
+    `lunaris-cli` reach the same wiring through the shared builder.
+    `lunaris_memory_service::recall::with_activation_boost` is gone; nothing
+    outside the crate called it.
+  - **Cost:** one activation-ledger point read per distinct hit, per recall,
+    on every surface — bounded by the hit set, never by the scope's size, and
+    pinned by `ledger_read_cost_is_one_point_read_per_distinct_hit`. Callers
+    with no ledger rows pay the reads and get an empty result;
+    `LUNARIS_ACTIVATION_BOOST=0` removes them.
+  - `LUNARIS_ACTIVATION_BOOST=0` is the opt-out on every surface, and now has
+    a test of its own (`tests/activation_boost_optout.rs`) rather than being
+    documented-only.
+  - **No published benchmark number changes**, for the same reason as F43:
+    `lunaris-bench` never calls `record_activation_refs`, so the gauntlet
+    reads an empty ledger on both arms. Teaching the bench to populate the
+    ledger is tracked separately — until it does, any A/B on the prior is
+    comparing two identical arms.
 
 ## [0.7.1] — 2026-08-25
 
