@@ -6,9 +6,10 @@ production-grade agent memory engine.
 `lunaris-mcp` exposes Lunaris memory to Claude Code, OpenAI Codex, and any
 other MCP-native agent via the stdio transport.
 
-**16 tools** are registered — eight durable-memory tools (`memory.ingest`,
+**17 tools** are registered — nine durable-memory tools (`memory.ingest`,
 `memory.recall`, `memory.forget`, `memory.list_scopes`, `memory.record_decision`,
-`memory.record_edit`, `memory.feedback`, `memory.status`), four working-memory
+`memory.record_edit`, `memory.feedback`, `memory.status`, `memory.remember`), four
+working-memory
 scratchpad tools (`memory.scratchpad_write`, `memory.scratchpad_read`,
 `memory.scratchpad_grep`, `memory.scratchpad_consolidate`), and four curation
 tools (`memory.verify_agenda`, `memory.resolve`, `memory.dream_agenda`,

@@ -9,7 +9,7 @@
 //! prove the server can start (see fix `89b9181`, found by dogfooding into Codex).
 //!
 //! This test spawns the real binary, drives the MCP `initialize` + `tools/list`
-//! handshake over stdio, and asserts the server stays up and enumerates all 16
+//! handshake over stdio, and asserts the server stays up and enumerates all 17
 //! tools. It exercises router validation for EVERY tool, not one response type,
 //! so reintroducing a non-object response schema on ANY future tool fails here.
 //!
@@ -40,6 +40,7 @@ const EXPECTED_TOOLS: &[&str] = &[
     "memory.recall",
     "memory.forget",
     "memory.list_scopes",
+    "memory.remember",
     "memory.record_decision",
     "memory.record_edit",
     "memory.feedback",

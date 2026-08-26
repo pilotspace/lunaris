@@ -78,10 +78,11 @@ published to crates.io and has no prebuilt release binary yet.
 
 ## 1. Give your AI agent memory (MCP)
 
-The MCP server gives any MCP-capable agent **16 memory tools** — eight
+The MCP server gives any MCP-capable agent **17 memory tools** — nine
 durable-memory tools (`memory.ingest`, `memory.recall`, `memory.forget`,
 `memory.list_scopes`, `memory.record_decision`, `memory.record_edit`,
-`memory.feedback`, `memory.status`), four working-memory scratchpad tools
+`memory.feedback`, `memory.status`, `memory.remember`), four working-memory
+scratchpad tools
 (`memory.scratchpad_write`, `memory.scratchpad_read`,
 `memory.scratchpad_grep`, `memory.scratchpad_consolidate`), and four
 curation tools that are the reason to pick Lunaris over a vector store —
@@ -188,9 +189,15 @@ memory deliberately:
 
 ```markdown
 ## Memory (Lunaris MCP)
-- Persist durable facts, decisions, and user preferences with
-  `memory.ingest`; record code decisions with `memory.record_decision`
-  and notable edits with `memory.record_edit`.
+- When you learn something a future session would need and could not
+  re-derive from the code, write it down with `memory.remember`. Four
+  kinds: `decision` (a choice + its rationale), `fix` (what broke and what
+  actually fixed it), `preference` (how this user wants to work),
+  `constraint` (project state or an invariant). Always fill `why` when there
+  is one. Do this on your own judgement, as it happens — nothing else in the
+  system distils raw activity into knowledge.
+- `memory.ingest` for raw observations; `memory.record_decision` /
+  `memory.record_edit` remain for structured decision and edit records.
 - Before answering questions about prior work, query `memory.recall`.
 - Use `memory.scratchpad_write`/`scratchpad_read`/`scratchpad_grep` for
   transient working notes within a task (drafts, plans, in-progress state);

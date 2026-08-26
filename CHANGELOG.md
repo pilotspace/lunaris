@@ -7,6 +7,23 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
 
 ### Added
 
+- **`memory.remember` — the direct-capture write path (W4.3b).** One tool,
+  four kinds: `decision` (a choice and its rationale), `fix` (what broke and
+  what actually fixed it), `preference` (how this user wants to work),
+  `constraint` (project state or an invariant that bounds future work). The
+  list is closed on purpose — "anything interesting" is how a store fills with
+  233k tool calls. Optional `why`, `tags` and `dedupe_key`; the content is
+  stored as readable prose (`content`, then `Why: …`) rather than a JSON
+  envelope, so a memory reads correctly with no renderer in front of it.
+  Filed under `source = "{kind}:{scope}"`, so `filters.source_prefix="fix:"`
+  retrieves only fixes. The MCP roster is now 17 tools.
+- `scripts/tests/test_mcp_tool_count_matches_the_server.py` — two checks, both
+  derived from the `#[tool(name = …)]` declarations rmcp builds the router
+  from: every stated tool count matches the server, and every page that
+  enumerates the roster names every registered tool. The second exists because
+  adding one tool moved nine "eight"s to "nine" and left every list at eight
+  names — a page that counts correctly but lists fewer reads as complete.
+
 - **`LUNARIS_CONTEXT_INCLUDE_TOOLCALLS` (W4.4).** Restores raw tool-call
   captures to context injection. Off by default. The older
   `LUNARIS_CONTEXT_PROMPT_INCLUDE_TOOLCALLS` is still honoured as an alias —
@@ -126,6 +143,14 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
   does nothing. Both names are honoured.
 
 ### Fixed
+
+- **Deliberately captured memories ranked below raw tool calls (W4.3b).**
+  `source_priority` had branches for `distilled:`, `decision:` and `edit:`;
+  the three new capture kinds fell to the `else` bucket at 50 while
+  `lunaris:tool_call:post` sits at 75. A constraint an agent chose to write
+  down would have been outranked by a shell command, and nothing would have
+  reported it — both are just numbers, and the memory still appears, lower.
+  `every_capture_kind_outranks_every_raw_capture` pins the ordering.
 
 - **The agent docs wired memory into a port the installer never opens
   (W4.1).** Every agent-facing doc named `moon://127.0.0.1:6380`, and three

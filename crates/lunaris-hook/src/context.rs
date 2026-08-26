@@ -2069,6 +2069,17 @@ fn source_priority(source: &str) -> i32 {
         95
     } else if source.starts_with("decision:") {
         90
+    } else if source.starts_with("constraint:") {
+        // W4.3b capture kinds. These sit with decisions and edits because they
+        // are the same thing: something a participant chose to write down.
+        // Landing in the `else` bucket at 50 would have ranked a deliberately
+        // captured constraint BELOW a raw tool call at 75 — the exact
+        // inversion the curation work exists to remove.
+        88
+    } else if source.starts_with("fix:") {
+        87
+    } else if source.starts_with("preference:") {
+        86
     } else if source.starts_with("edit:") {
         85
     } else if source == "lunaris:tool_call:post" {
@@ -2949,6 +2960,39 @@ mod tests {
             "only {wired} injection filters call injectable_source; there are four recall \
              pipelines and each must demote telemetry"
         );
+    }
+
+    /// W4.3b — every deliberately captured kind outranks every raw capture.
+    ///
+    /// The three new `memory.remember` kinds had no branch here when they were
+    /// added, so they fell to the default 50 while `lunaris:tool_call:post`
+    /// sits at 75: a constraint an agent chose to write down would have been
+    /// outranked by a shell command. Nothing would have reported that — both
+    /// are just numbers, and the memory still appears, lower.
+    #[test]
+    fn every_capture_kind_outranks_every_raw_capture() {
+        let captured =
+            ["distilled:s", "decision:s", "constraint:s", "fix:s", "preference:s", "edit:s"];
+        let raw = [
+            "lunaris:tool_call:post",
+            "lunaris:tool_call:pre",
+            "lunaris:post_tool_use",
+            "lunaris:pre_tool_use",
+        ];
+        for c in captured {
+            for r in raw {
+                assert!(
+                    source_priority(c) > source_priority(r),
+                    "{c} ({}) must outrank {r} ({})",
+                    source_priority(c),
+                    source_priority(r)
+                );
+            }
+            assert!(
+                source_priority(c) > source_priority("something:else"),
+                "{c} must outrank an unclassified source, or the branch is missing"
+            );
+        }
     }
 
     #[test]

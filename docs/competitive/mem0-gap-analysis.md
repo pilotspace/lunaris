@@ -25,7 +25,7 @@ frozen rubric (hardening-first).
 | 5 | memory-update-intelligence | gap-missing | Lunaris ingest is append-only; no write-time ADD/UPDATE/DELETE/NOOP or contradiction resolution (CONTESTED vs Mem0 version — see §B) |
 | 6 | multi-level-memory + categories | partial(built-not-wired) | metadata filtering is wired at recall, but no typed user/session/agent levels and no auto-categorization |
 | 7 | graph-quality | ahead | graph extraction + traversal wired into RRF recall with no LLM on the read path; Mem0 OSS v3 removed graph (Platform-only, with open deletion bugs) |
-| 8 | SDK / DX / integrations | partial(built-not-wired) | Python/TS SDKs + MCP (16 tools) ship, but LangGraph/CrewAI/Letta adapters are promised in docs yet absent in code |
+| 8 | SDK / DX / integrations | partial(built-not-wired) | Python/TS SDKs + MCP (17 tools) ship, but LangGraph/CrewAI/Letta adapters are promised in docs yet absent in code |
 
 ## B. Methodology
 
@@ -55,7 +55,7 @@ frozen rubric (hardening-first).
 | memory-update-intelligence | per-observation LLM ADD/UPDATE/DELETE/NOOP reconciliation (v2); v3 single-pass ADD | append-only ingest; ACT-R archive is recency-decay, not contradiction; no UPDATE/DELETE | crates/lunaris-consolidate/src/act_r.rs:ActRConsolidator | https://github.com/mem0ai/mem0/blob/main/mem0/memory/main.py (2026-06-14) | gap-missing | P1 |
 | multi-level-memory | user/agent/app/run scope axes + category metadata filtering | Scope is one opaque string; recall metadata filter wired; no typed levels/categories | crates/lunaris-core/src/scope.rs:Scope | https://docs.mem0.ai/platform/features/entity-scoped-memory (2026-06-14) | partial(built-not-wired) | P1 |
 | graph-quality | Mem0g Neo4j, LLM on read path; OSS v3 removed graph; open delete bug | graph extract+traverse wired into RRF recall; no LLM on read; MERGE dedup | crates/lunaris-retrieve/src/operators/navigate.rs:Navigate | https://docs.mem0.ai/migration/oss-v2-to-v3 (2026-06-14) | ahead | P2 |
-| sdk-dx | Python/TS/Go SDKs + 13 framework integrations + hosted API | Python/TS SDKs + MCP (16 tools); LangGraph/CrewAI/Letta adapters promised but absent | crates/lunaris-py/src/lib.rs | https://docs.mem0.ai/integrations (2026-06-14) | partial(built-not-wired) | P1 |
+| sdk-dx | Python/TS/Go SDKs + 13 framework integrations + hosted API | Python/TS SDKs + MCP (17 tools); LangGraph/CrewAI/Letta adapters promised but absent | crates/lunaris-py/src/lib.rs | https://docs.mem0.ai/integrations (2026-06-14) | partial(built-not-wired) | P1 |
 
 ### Per-dimension detail (evidence)
 
@@ -105,7 +105,7 @@ into the same atomic write (`ingest.rs:466-514`, behind an off-by-default toggle
 **no LLM on the read path**. Open gap: RAPTOR community edges are a `TODO(phase-future)`.
 
 **8 · sdk-dx** — `lunaris-py` (`pip install lunaris`) and `lunaris-ts`
-(`npm i @pilotspace/lunaris`) ship full surfaces; `lunaris-mcp` ships 16 tools as a universal shim. But
+(`npm i @pilotspace/lunaris`) ship full surfaces; `lunaris-mcp` ships 17 tools as a universal shim. But
 LangGraph/CrewAI/Letta adapters **do not exist** — the only code mention is a conformance test corpus
 string — while `POSITIONING.md:105` advertises them as a shipped "v0.4 ecosystem" (the repo is at v0.7).
 
