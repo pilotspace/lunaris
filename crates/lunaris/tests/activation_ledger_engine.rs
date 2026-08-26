@@ -362,6 +362,97 @@ async fn reinforced_memory_outranks_across_handles() {
 }
 
 // ---------------------------------------------------------------------------
+// W1.8 — the SDK ships the WRITE half of the ledger and never reads it.
+// ---------------------------------------------------------------------------
+
+/// `ScopedLunaris::record_activation_refs` is public SDK surface: a caller can
+/// write the activation ledger. `ScopedLunaris::dsl()` / `recall()` never wire
+/// a `BoostProvider`, so those writes have NO effect on SDK recall — the write
+/// half is reachable and the read half is not. The test above papers over this
+/// by constructing a `LedgerBoostProvider` by hand, which no SDK caller can
+/// even do: neither `BoostProvider` nor `LedgerBoostProvider` is re-exported
+/// from the `lunaris` umbrella.
+///
+/// This is the same defect shape as the ledger itself being inert (F43): both
+/// halves have tests, neither test crosses the production path.
+///
+/// Uses ONLY public SDK surface — no manual `with_boost_provider`.
+#[tokio::test]
+async fn sdk_recall_honors_the_ledger_the_sdk_lets_callers_write() {
+    let scope = Scope::new("test.ledger-sdk-default").unwrap();
+    let clock = HlcClock::new(0);
+    let (id_a, id_b) = (Ulid::new(), Ulid::new());
+    let (ep_a, ep_b) = (Ulid::new(), Ulid::new());
+
+    // B ranks first pre-boost, so a flip to A is explained only by the ledger.
+    let storage =
+        Arc::new(LedgerTestStorage::new(vec![vector_hit(id_b, 0.80), vector_hit(id_a, 0.80)]));
+    seed_chunk(&storage, &scope, id_a, ep_a, "chunk A", &clock);
+    seed_chunk(&storage, &scope, id_b, ep_b, "chunk B", &clock);
+
+    let handle = make_handle(storage.clone());
+    let scoped = handle.scoped(scope.clone());
+
+    // WRITE half — public SDK.
+    scoped
+        .record_activation_refs(&[
+            RefSignal { id: ep_a, grain: Grain::ToolCall, strength: Strength::Strong },
+            RefSignal { id: ep_a, grain: Grain::ToolCall, strength: Strength::Strong },
+        ])
+        .await
+        .expect("record_activation_refs must succeed");
+
+    // READ half — public SDK, default builder, NOTHING wired by hand.
+    let hits = scoped
+        .dsl()
+        .with_root(Vector::new("chunks", 30))
+        .execute(Query::text("q"))
+        .await
+        .expect("recall must succeed");
+
+    assert_eq!(hits.len(), 2);
+    assert_eq!(
+        hits[0].text, "chunk A",
+        "the SDK let the caller WRITE this reinforcement; its own recall must \
+         read it back. A write half with no read half is not a contract, it is \
+         a no-op with a public name: {hits:#?}"
+    );
+}
+
+/// Anti-vacuity companion. If the assertion above ever passes because every
+/// hit is boosted (or because the fixture stopped discriminating), this fails:
+/// a scope whose ledger was NEVER written must keep pre-boost order exactly.
+#[tokio::test]
+async fn sdk_recall_without_any_ledger_writes_keeps_preboost_order() {
+    let scope = Scope::new("test.ledger-sdk-none").unwrap();
+    let clock = HlcClock::new(0);
+    let (id_a, id_b) = (Ulid::new(), Ulid::new());
+    let (ep_a, ep_b) = (Ulid::new(), Ulid::new());
+
+    let storage =
+        Arc::new(LedgerTestStorage::new(vec![vector_hit(id_b, 0.80), vector_hit(id_a, 0.80)]));
+    seed_chunk(&storage, &scope, id_a, ep_a, "chunk A", &clock);
+    seed_chunk(&storage, &scope, id_b, ep_b, "chunk B", &clock);
+
+    let handle = make_handle(storage.clone());
+    let scoped = handle.scoped(scope.clone());
+
+    // No record_activation_refs at all.
+    let hits = scoped
+        .dsl()
+        .with_root(Vector::new("chunks", 30))
+        .execute(Query::text("q"))
+        .await
+        .expect("recall must succeed");
+
+    assert_eq!(
+        hits[0].text, "chunk B",
+        "with an empty ledger the prior must be exactly zero, so pre-boost \
+         order stands: {hits:#?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Test 3 — reject: a corrupt activation record never fails recall.
 // ---------------------------------------------------------------------------
 
