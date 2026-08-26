@@ -61,6 +61,25 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
   rather than a prometheus metric, because core carries no metrics dependency
   and the drop happens on every surface (MCP, hook, CLI, HTTP), not only the
   one that serves `/metrics`; the server mirrors it in at scrape time.
+- **`lunaris-integrations` is publishable (W4.7).**
+  `.github/workflows/integrations-publish.yml` builds the sdist + universal
+  wheel on every PR that touches `integrations/`, runs the test suite against
+  each framework extra, and uploads to PyPI on a `v*` tag. The distribution
+  name has never existed on PyPI, so the first `pip install
+  lunaris-integrations` will work from the next release; until then the README
+  gives the `-e` form, which is what the examples and CI already use.
+  **The first tag run is owner-gated** — see `docs/RELEASE.md` §3.
+- **`integrations/tests/` has a CI runner.** All 18 tests — the whole suite for
+  the package about to go on PyPI — had never run: `grep -rn
+  "integrations/tests" .github/workflows/` returned nothing, and `examples.yml`
+  installs the extras only to run mypy. Three of them `importorskip` their
+  framework, so the new job runs one extra per matrix leg and **fails the leg
+  if its own adapter test skipped** — a leg whose framework silently failed to
+  install would otherwise report green having asserted nothing.
+- Two repo-wide guards in `scripts/tests/test_published_distributions.py`:
+  a documented `pip install X` must name a distribution some workflow
+  publishes, and every published manifest must carry the workspace version.
+
 - **`lunaris_core::models` — one catalogue naming the GGUF artifacts (W0.7).**
   `ModelKind::{filename, url, sha256, size_mb, display_name, env_override}`
   plus `models_dir()` / `staged_path()`, compiled unconditionally and carrying
@@ -79,6 +98,15 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
   does nothing. Both names are honoured.
 
 ### Fixed
+
+- **`integrations/pyproject.toml` was never a `bump-version.sh` surface
+  (W4.7).** It sat at `0.7.0` through the entire 0.7.1 release while every
+  other version surface moved. Nothing built the package, so nothing noticed;
+  with `integrations-publish.yml` in place a stale number would have uploaded
+  the previous release's version to PyPI. Bumped, added to the script, and
+  pinned by `test_published_distributions.py` — which derives the set from
+  "what does a workflow publish?" rather than a hand-written list, so it covers
+  the manifest added next.
 
 - **The MCP server ignored `LUNARIS_EMBEDDER_GGUF` when staging (W0.7).**
   `maybe_ensure_staged` called a stager that downloads unconditionally, so an

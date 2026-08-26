@@ -27,10 +27,20 @@ git push origin v0.7.0
 # 3. CI does NOT run on the tag. `ci.yml` triggers on main pushes + PRs
 #    only, so semver-checks (advisory) and the lunaris-core
 #    `cargo publish --dry-run` must already be green on the MAIN COMMIT you
-#    are tagging — check the main-push board there, not the tag. FIVE
+#    are tagging — check the main-push board there, not the tag. SIX
 #    workflows fire on a `v*` tag: crates-publish, ts-prebuild, mcp-prebuild,
-#    python-prebuild, and cli-release. (`ci.yml` has NO tag-gated job — the
-#    dormant submodule-tag-parity / RELEASE-05 job was removed in issue #136.)
+#    python-prebuild, cli-release, and integrations-publish. (`ci.yml` has NO
+#    tag-gated job — the dormant submodule-tag-parity / RELEASE-05 job was
+#    removed in issue #136.)
+#
+#    integrations-publish is new in 0.7.2 (W4.7) and its FIRST run is
+#    owner-gated: it uploads `lunaris-integrations` with
+#    `secrets.MATURIN_PYPI_TOKEN`, the token python-prebuild.yml uses for the
+#    `lunaris` project. If that token is project-scoped it CANNOT upload a
+#    different distribution and the step 403s — widen it, or create the PyPI
+#    project and a scoped token under the same secret name, BEFORE the tag.
+#    Its build job runs on every PR touching `integrations/`, so only the
+#    upload is unproven until then.
 #
 #    cli-release is easy to miss: its `on:` block leads with `push: branches:
 #    [main]` and a `paths:` filter, so it reads as a main-only workflow, but
