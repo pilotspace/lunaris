@@ -367,6 +367,25 @@ invariant in CLAUDE.md: no test binary links Moon.
    fusion rather than after, or the documented strength of a `Strong` signal
    needs to come down to match what it actually does.
 
+   > **RE-OPENED 2026-08-26 — the mechanism above is in doubt, and one of the
+   > two remedies is actively harmful (F43).** The activation prior was
+   > *inert*, not merely dominated: `boost_prior` clamped negative ACT-R
+   > activation to zero, so it read exactly `0.0` for any memory older than
+   > `weighted²` **seconds** — 9s after one strong reference, 15 minutes after
+   > ten. "Does not reliably outrank" is exactly what a near-zero prior looks
+   > like, so this observation may have been F43 all along rather than an
+   > RRF-gap effect. The two are not mutually exclusive and this entry is NOT
+   > being closed on that basis: **re-take the measurement against the fixed
+   > curve before concluding anything.**
+   >
+   > Do NOT act on the second proposed remedy. Lowering the strength of a
+   > `Strong` signal reduces `weighted`, and the cliff sits at `weighted²`
+   > seconds — so "bring the documented strength down to match what it
+   > actually does" would have moved the cliff *earlier* and made the prior
+   > weaker still, while appearing to align docs with observed behaviour.
+   > That is the hazard of tuning a constant to match a symptom whose
+   > mechanism has not been established.
+
 ## 7. How to verify a port
 
 Per-crate green on both policies is the batch gate, but it is NOT sufficient on

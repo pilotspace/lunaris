@@ -174,7 +174,8 @@ reference. Measured for a memory referenced ten times (`weighted = 30`):
 A memory that was **never** referenced gets exactly `0.0` — the ledger only ever
 promotes, never demotes, so an unreferenced memory keeps its raw hybrid rank.
 
-> Before v0.7.2 this curve clamped negative ACT-R activation to zero, which made
+> Until the fix for **F43** landed, this curve clamped negative ACT-R
+> activation to zero, which made
 > the prior read exactly `0.0` for any memory older than `weighted²` seconds — 9
 > seconds after a single strong reference, 15 minutes after ten. If you are
 > reading recall traces from an older build, the boost column is expected to be
