@@ -28,7 +28,7 @@ Via the Claude Code CLI:
 
 ```bash
 claude mcp add --transport stdio lunaris \
-  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6380 \
+  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6381 \
   -- npx -y @pilotspace/lunaris-mcp
 ```
 

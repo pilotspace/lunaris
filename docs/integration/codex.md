@@ -143,7 +143,7 @@ From a Lunaris checkout:
 scripts/setup-lunaris-agents.py --agent codex --runner local
 
 # Also build the vendored Moon server with its default feature set
-# (mq + graph + text-index default) for moon://127.0.0.1:6380.
+# (mq + graph + text-index default) for moon://127.0.0.1:6381.
 scripts/setup-lunaris-agents.py --agent codex --runner local --build-moon
 
 # Packaged MCP runner modes, once the PyPI/npm packages are published.
@@ -160,7 +160,7 @@ The script:
   binary or packaged runner commands like `uvx lunaris-mcp` / `npx -y @pilotspace/lunaris-mcp`;
 - optionally builds the vendored Moon release binary with `--build-moon`;
   Moon's default feature set enables `mq`, graph, and text-index support;
-- points storage at Moon (`moon://127.0.0.1:6380` unless `--moon-url` says
+- points storage at Moon (`moon://127.0.0.1:6381` unless `--moon-url` says
   otherwise), writing `LUNARIS_MCP_STORAGE` for MCP and `LUNARIS_STORE_URL`
   for hooks/contextd — both are **required** as of 0.7.0, and neither binary
   starts without one;
@@ -183,7 +183,7 @@ scripts/setup-lunaris-agents.py --agent codex --runner local --hooks off
 Use a different Moon instance:
 
 ```sh
-scripts/setup-lunaris-agents.py --agent codex --runner local --moon-url moon://192.168.1.10:6380
+scripts/setup-lunaris-agents.py --agent codex --runner local --moon-url moon://192.168.1.10:6381
 ```
 
 Use `--runner uvx` or `--runner npx` after the corresponding package has been
@@ -425,7 +425,7 @@ export LUNARIS_CONTEXTD_AUTOSTART=0
 export LUNARIS_CONTEXTD_SOCKET="$HOME/.lunaris/my-contextd.sock"
 
 # Force storage shared by MCP and hooks.
-export LUNARIS_STORE_URL="moon://127.0.0.1:6380"
+export LUNARIS_STORE_URL="moon://127.0.0.1:6381"
 export LUNARIS_GRAPH_ENABLED=1
 ```
 
@@ -514,12 +514,12 @@ command = "lunaris-mcp"
 args    = []
 
 [mcp_servers.lunaris.env]
-LUNARIS_MCP_STORAGE = "moon://127.0.0.1:6380"
+LUNARIS_MCP_STORAGE = "moon://127.0.0.1:6381"
 LUNARIS_GRAPH_ENABLED = "1"
 ```
 
-Moon runs on port 6380 by default
-(`moon --port 6380 --shards 1 --appendonly yes`). `--shards 1` is mandatory —
+Moon runs on port 6381 by default
+(`moon --port 6381 --shards 1 --appendonly yes`). `--shards 1` is mandatory —
 an ingest is one MULTI/EXEC transaction and a sharded Moon rejects it. Moon
 provides native vector search, BM25/hybrid fusion, graph traversal, queues,
 and search-side bi-temporal reads.
@@ -528,7 +528,7 @@ and search-side bi-temporal reads.
 
 ```toml
 [mcp_servers.lunaris.env]
-LUNARIS_MCP_STORAGE = "moon://moon.internal:6380"
+LUNARIS_MCP_STORAGE = "moon://moon.internal:6381"
 ```
 
 ### Adjust log verbosity
@@ -554,7 +554,7 @@ LUNARIS_MCP_SKIP_STAGE = "1"
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LUNARIS_MCP_SCOPE` | derived from git/cwd | Force a specific scope name |
-| `LUNARIS_MCP_STORAGE` | *(no default)* | Storage URL; setup writes `moon://127.0.0.1:6380`. Unset: falls back to a live store advertised in `~/.lunaris/contextd-moon.url`, else refuses to boot |
+| `LUNARIS_MCP_STORAGE` | *(no default)* | Storage URL; setup writes `moon://127.0.0.1:6381`. Unset: falls back to a live store advertised in `~/.lunaris/contextd-moon.url`, else refuses to boot |
 | `LUNARIS_MOON_DISCOVERY_TIMEOUT_MS` | `25` | Liveness-probe budget for that discovery file (`0` disables discovery) |
 | `LUNARIS_GRAPH_ENABLED` | setup writes `1`; otherwise off | Enable graph extraction/write path for graph retrieval |
 | `LUNARIS_EMBED_CACHE_CAPACITY` | `2048` | Exact-text embedding cache entries per MCP process; set `0` to disable |
@@ -647,11 +647,11 @@ no default and the server will not start without it:
 
 ```toml
 [mcp_servers.lunaris.env]
-LUNARIS_MCP_STORAGE = "moon://127.0.0.1:6380"
+LUNARIS_MCP_STORAGE = "moon://127.0.0.1:6381"
 LUNARIS_GRAPH_ENABLED = "1"
 ```
 
-Start Moon with `moon --port 6380 --shards 1 --appendonly yes`, or run the
+Start Moon with `moon --port 6381 --shards 1 --appendonly yes`, or run the
 `ghcr.io/pilotspace/moon` image with the same flags. Production setup is in
 [`docs/operations/external-moon.md`](../operations/external-moon.md).
 

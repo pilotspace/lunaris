@@ -72,11 +72,11 @@ args    = []
 
 [mcp_servers.lunaris.env]
 LUNARIS_MCP_SCOPE     = "my-project"
-LUNARIS_MCP_STORAGE   = "moon://127.0.0.1:6380"
+LUNARIS_MCP_STORAGE   = "moon://127.0.0.1:6381"
 LUNARIS_GRAPH_ENABLED = "1"
 ```
 
-Run Moon with `../moon/target/release/moon --port 6380`.
+Run Moon with `../moon/target/release/moon --port 6381`.
 
 ## Hooks, injection & the warm sidecar (optional)
 

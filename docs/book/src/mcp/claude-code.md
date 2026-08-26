@@ -12,17 +12,17 @@ Pick whichever runner you installed (see [Install](./index.md#install)):
 ```sh
 # cargo-installed binary, shared with your team via the repo's .mcp.json
 claude mcp add --scope project --transport stdio lunaris \
-  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6380 \
+  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6381 \
   -- lunaris-mcp
 
 # no Rust toolchain (Node)
 claude mcp add --transport stdio lunaris \
-  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6380 \
+  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6381 \
   -- npx -y @pilotspace/lunaris-mcp
 
 # no Rust toolchain (Python)
 claude mcp add --transport stdio lunaris \
-  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6380 \
+  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6381 \
   -- uvx lunaris-mcp
 ```
 
@@ -89,7 +89,7 @@ the server's `env` block:
       "command": "lunaris-mcp",
       "args": [],
       "env": {
-        "LUNARIS_MCP_STORAGE": "moon://127.0.0.1:6380",
+        "LUNARIS_MCP_STORAGE": "moon://127.0.0.1:6381",
         "LUNARIS_GRAPH_ENABLED": "1"
       }
     }
@@ -97,7 +97,7 @@ the server's `env` block:
 }
 ```
 
-Run Moon with `../moon/target/release/moon --port 6380`.
+Run Moon with `../moon/target/release/moon --port 6381`.
 
 ## Hooks & context injection (optional)
 

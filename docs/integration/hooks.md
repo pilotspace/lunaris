@@ -78,7 +78,7 @@ scripts/setup-lunaris-agents.py --agent codex --runner local
 ```
 
 The setup script points hook/context storage at Moon by writing
-`LUNARIS_STORE_URL=moon://127.0.0.1:6380`. It also writes
+`LUNARIS_STORE_URL=moon://127.0.0.1:6381`. It also writes
 `LUNARIS_GRAPH_ENABLED=1`, which lets graph-enabled ingests populate Moon's
 graph store for later graph retrieval. Use `--moon-url moon://host:port` to
 point at another Moon instance. There is no non-Moon option as of 0.7.0 —
@@ -456,7 +456,7 @@ future invocations for the session.
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `LUNARIS_HOOK_SCOPE` | *(derived)* | Override scope name directly |
-| `LUNARIS_STORE_URL` | *(required — no default)* | Storage URL, shared with `lunaris-mcp`; setup writes `moon://127.0.0.1:6380`. Unset, and with no live contextd discovery file, the hook exits with the quickstart |
+| `LUNARIS_STORE_URL` | *(required — no default)* | Storage URL, shared with `lunaris-mcp`; setup writes `moon://127.0.0.1:6381`. Unset, and with no live contextd discovery file, the hook exits with the quickstart |
 | `LUNARIS_GRAPH_ENABLED` | setup writes `1` for Moon; binary fallback is off | Enable graph extraction/write path for graph retrieval |
 | `LUNARIS_HOOK_LOG` | `warn` | Log filter directive (RUST_LOG syntax) |
 | `LUNARIS_HOOK_LOG_JSON` | *(unset)* | Set to `1` for structured JSON stderr on errors |
