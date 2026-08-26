@@ -277,6 +277,35 @@ pub trait StoragePort: Send + Sync + 'static {
         Err(StorageError::NotSupported("queue_depth not implemented for this StoragePort backend"))
     }
 
+    /// W4.6 / D6.3 — NON-DESTRUCTIVE range read over a queue topic.
+    ///
+    /// `subscribe` is the wrong shape for an audit reader: it POPs, ACKs, and
+    /// hands the entry over exactly once, so reading the trail would destroy
+    /// it and a second reader would see nothing. This reads a closed range
+    /// without claiming, acking, or advancing any consumer group, so an
+    /// operator can query the same history repeatedly and a background
+    /// consumer on the same topic is unaffected.
+    ///
+    /// `from_ms` / `to_ms` are inclusive wall-clock bounds in milliseconds;
+    /// `None` means unbounded on that side. Results are ordered oldest-first
+    /// and capped at `limit`.
+    ///
+    /// **Additive trait method**, same contract as [`Self::queue_depth`]: the
+    /// default returns `NotSupported` so existing impls keep compiling. Moon
+    /// implements it over the underlying stream.
+    async fn queue_range(
+        &self,
+        scope: &Scope,
+        _topic: &str,
+        _partition: u16,
+        _from_ms: Option<u64>,
+        _to_ms: Option<u64>,
+        _limit: usize,
+    ) -> Result<Vec<QueueMsg>, StorageError> {
+        let _ = scope;
+        Err(StorageError::NotSupported("queue_range not implemented for this StoragePort backend"))
+    }
+
     /// Enumerate known scopes under an optional `prefix`, paginated.
     ///
     /// Returns a [`ScopePage`] whose `scopes` field is ordered ascending by
