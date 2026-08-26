@@ -7,6 +7,20 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
 
 ### Added
 
+- **`LUNARIS_CONTEXT_INCLUDE_TOOLCALLS` (W4.4).** Restores raw tool-call
+  captures to context injection. Off by default. The older
+  `LUNARIS_CONTEXT_PROMPT_INCLUDE_TOOLCALLS` is still honoured as an alias —
+  it named the only escape hatch that existed, so an operator who set it was
+  asking for tool captures and must not silently lose them.
+- **An injection-composition ratchet** —
+  `crates/lunaris-hook/tests/injection_composition.rs` drives the real
+  `lunaris-contextd` binary over a store seeded 4:1 telemetry-to-curated and
+  asserts no telemetry reaches an agent's context. It cannot pass vacuously:
+  one arm requires a curated memory to come back (zero hits and zero telemetry
+  are the same observable state) and a second arm re-runs the same store with
+  the toggle on and requires telemetry to reappear, so the silence in arm one
+  is attributable to the filter rather than to an empty read.
+
 - **Per-scope retention (W4.6, D6.4).** `ScopedLunaris::set_retention_policy` /
   `retention_policy` / `enforce_retention` (and `enforce_retention_at` for a
   caller-pinned cutoff). A policy is `{ max_age_ms, hard }`; rows whose
@@ -204,6 +218,25 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
   not "already gone".
 
 ### Changed
+
+- **Raw tool-call telemetry is no longer injected into agent context
+  (W4.4).** **Behaviour change.** Captures are still written, still stored and
+  still returned by `memory.recall` — they are substrate, not context — but
+  the hook no longer injects them automatically at any phase.
+
+  The exclusion previously applied at the `prompt` phase only, on the
+  reasoning that a prior tool result is on-topic right after a tool call. A
+  census of a live store over 1,204 real injection blocks found **99.9% of
+  everything injected was a raw tool call**, with two curated entries in the
+  entire history: `post_tool` carried the volume, so excluding `prompt` alone
+  changed almost nothing. Agents were reading their own shell history instead
+  of their decisions.
+
+  `injectable_at_phase(phase, source, include)` is now
+  `injectable_source(source, include)`. The parameter was removed rather than
+  ignored — a phase argument that no longer decides anything reads like the
+  exclusion is still phase-scoped. Set `LUNARIS_CONTEXT_INCLUDE_TOOLCALLS=1`
+  to restore the old behaviour.
 
 - **Audit events are published under the scope that produced them (W4.6,
   D6.1).** **Breaking, source-level:** `lunaris_core::audit::Publisher::publish`

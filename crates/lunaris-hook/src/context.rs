@@ -810,10 +810,14 @@ impl ContextService {
         // a recall failure must never surface to the agent.
         let recall_mode =
             std::env::var("LUNARIS_CONTEXT_RECALL").unwrap_or_else(|_| "hybrid".to_owned());
-        // PROMPT-phase injection excludes raw tool-call captures (they crowd out
-        // durable decisions/edits and render as low-signal execution logs);
-        // `LUNARIS_CONTEXT_PROMPT_INCLUDE_TOOLCALLS=1` restores them.
-        let include_toolcalls = env_flag("LUNARIS_CONTEXT_PROMPT_INCLUDE_TOOLCALLS");
+        // W4.4 — raw tool-call captures are substrate, not context: never
+        // injected at any phase by default. `LUNARIS_CONTEXT_INCLUDE_TOOLCALLS=1`
+        // restores them. The older `..._PROMPT_INCLUDE_TOOLCALLS` is still
+        // honoured: it named the only escape hatch that existed, an operator
+        // who set it was asking for tool captures, and silently dropping it
+        // would take away the injection they had explicitly turned on.
+        let include_toolcalls = env_flag("LUNARIS_CONTEXT_INCLUDE_TOOLCALLS")
+            || env_flag("LUNARIS_CONTEXT_PROMPT_INCLUDE_TOOLCALLS");
         let started = Instant::now();
         let mut hybrid_memories: Option<Vec<ContextMemory>> = None;
         if recall_mode != "vector" {
@@ -826,7 +830,7 @@ impl ContextService {
                     // a fused leg.
                     let candidates: Vec<ContextMemory> = hits
                         .into_iter()
-                        .filter(|h| injectable_at_phase(phase, &h.source, include_toolcalls))
+                        .filter(|h| injectable_source(&h.source, include_toolcalls))
                         .map(|h| ContextMemory {
                             episode_id: ulid_bytes_to_string(&h.id),
                             stale: false,
@@ -879,7 +883,7 @@ impl ContextService {
         let mut candidates: Vec<ContextMemory> = hits
             .into_iter()
             .filter(|h| h.score >= min_score)
-            .filter(|h| injectable_at_phase(phase, &h.source, include_toolcalls))
+            .filter(|h| injectable_source(&h.source, include_toolcalls))
             .map(|h| ContextMemory {
                 episode_id: ulid_bytes_to_string(&h.id),
                 stale: false,
@@ -899,7 +903,7 @@ impl ContextService {
                 keyword_hits
                     .into_iter()
                     .filter(|h| h.score >= min_score)
-                    .filter(|h| injectable_at_phase(phase, &h.source, include_toolcalls))
+                    .filter(|h| injectable_source(&h.source, include_toolcalls))
                     .map(|h| ContextMemory {
                         episode_id: ulid_bytes_to_string(&h.id),
                         stale: false,
@@ -948,7 +952,7 @@ impl ContextService {
             let keyword_candidates: Vec<ContextMemory> = keyword_hits
                 .into_iter()
                 .filter(|h| h.score >= min_score)
-                .filter(|h| injectable_at_phase(phase, &h.source, include_toolcalls))
+                .filter(|h| injectable_source(&h.source, include_toolcalls))
                 .map(|h| ContextMemory {
                     episode_id: ulid_bytes_to_string(&h.id),
                     stale: false,
@@ -2036,20 +2040,26 @@ fn is_toolcall_capture(source: &str) -> bool {
     )
 }
 
-/// Whether a hit from `source` is eligible for injection at `phase`.
+/// Whether a hit from `source` is eligible for context injection (W4.4).
 ///
-/// Raw tool-call captures are excluded at the PROMPT phase (they crowd out
-/// durable decisions/edits and often render as low-signal execution logs),
-/// unless `include_toolcalls` restores them
-/// (`LUNARIS_CONTEXT_PROMPT_INCLUDE_TOOLCALLS=1`). Every other phase — notably
-/// `post_tool`, where a prior tool result IS on-topic — keeps them. Pure so the
-/// env read stays at the call site (tests need no `env::set_var`; the crate is
-/// `#![forbid(unsafe_code)]`).
-fn injectable_at_phase(phase: &str, source: &str, include_toolcalls: bool) -> bool {
-    if phase == "prompt" && !include_toolcalls && is_toolcall_capture(source) {
-        return false;
-    }
-    true
+/// Raw tool-call captures are **substrate, not context**: still written, still
+/// stored, still returned by `memory.recall` and still ranked — but never
+/// injected into an agent's context automatically. `include_toolcalls`
+/// (`LUNARIS_CONTEXT_INCLUDE_TOOLCALLS=1`) restores them.
+///
+/// This used to take a `phase` and exclude captures at `prompt` only, on the
+/// reasoning that a prior tool result is on-topic right after a tool call. A
+/// census of the live store disagreed: across 1,204 real injection blocks,
+/// **99.9% of everything injected was a raw tool call** and the whole history
+/// contained two curated entries. `post_tool` carried the volume, so excluding
+/// `prompt` alone changed almost nothing. The parameter is gone rather than
+/// ignored — a phase argument that no longer decides anything reads like the
+/// exclusion is still phase-scoped.
+///
+/// Pure, so the env read stays at the call site: tests need no `env::set_var`,
+/// and the crate is `#![forbid(unsafe_code)]`.
+fn injectable_source(source: &str, include_toolcalls: bool) -> bool {
+    include_toolcalls || !is_toolcall_capture(source)
 }
 
 fn source_priority(source: &str) -> i32 {
@@ -2844,39 +2854,111 @@ mod tests {
     }
 
     #[test]
-    fn injectable_at_phase_excludes_toolcalls_at_prompt() {
+    fn injectable_source_excludes_toolcalls_and_keeps_decisions() {
         assert!(
-            !injectable_at_phase("prompt", "lunaris:tool_call:post", false),
-            "codex tool-call captures must be excluded from prompt injection"
+            !injectable_source("lunaris:tool_call:post", false),
+            "codex tool-call captures must be excluded from injection"
         );
         assert!(
-            !injectable_at_phase("prompt", "lunaris:post_tool_use", false),
-            "claude-code tool captures must be excluded from prompt injection"
+            !injectable_source("lunaris:post_tool_use", false),
+            "claude-code tool captures must be excluded from injection"
         );
+        assert!(injectable_source("decision:x", false), "decisions must remain injectable");
+        assert!(injectable_source("edit:y", false), "edits must remain injectable");
+    }
+
+    /// W4.4 — a raw tool-call capture is never injected, whatever the phase.
+    ///
+    /// This replaces `injectable_at_phase_keeps_toolcalls_post_tool`, which
+    /// asserted that a prior tool result "is on-topic at post_tool phase".
+    /// Sound in the abstract, wrong in practice: a census of the live store
+    /// over 1,204 real injection blocks found **99.9% of everything injected
+    /// was a raw tool call**, and two curated entries in the whole history.
+    /// The prompt-phase exclusion already existed; `post_tool` carried the
+    /// volume, so excluding one phase and not the other changed nothing.
+    ///
+    /// No phase loop here on purpose: the predicate no longer takes a phase,
+    /// so iterating phase strings would assert the same call repeatedly while
+    /// reading like phase coverage. Phases live at the call sites, and
+    /// `every_injection_filter_uses_the_shared_predicate` is what holds them.
+    #[test]
+    fn injectable_source_excludes_every_toolcall_capture() {
+        for source in [
+            "lunaris:tool_call:pre",
+            "lunaris:tool_call:post",
+            "lunaris:pre_tool_use",
+            "lunaris:post_tool_use",
+        ] {
+            assert!(!injectable_source(source, false), "{source} must not be injected by default");
+            assert!(
+                is_toolcall_capture(source),
+                "{source} must be recognised as a capture — otherwise the line above passes \
+                 for the wrong reason and a renamed source silently becomes injectable again"
+            );
+        }
+    }
+
+    /// Demoted means "not injected". It never means "not stored", "not
+    /// searchable" or "not ranked" — everything written deliberately stays.
+    #[test]
+    fn injectable_source_keeps_every_curated_source() {
+        for source in ["decision:x", "edit:y", "distilled:z", "lunaris:user_prompt", "other"] {
+            assert!(injectable_source(source, false), "{source} must stay injectable");
+        }
+    }
+
+    /// W4.4 wiring — every hit pipeline that scores also demotes.
+    ///
+    /// `injectable_source` only demotes telemetry on the paths that call it,
+    /// and there are four separate recall pipelines here (hybrid hot path,
+    /// vector, degraded, fallback). Four of five would look exactly like five
+    /// of five until an agent hit the fifth. The pairing is the invariant: a
+    /// pipeline that filters hits by `min_score` is an injection pipeline, so
+    /// it must also filter by `injectable_source`. A new path that scores but
+    /// forgets to demote fails here rather than in a user's context window.
+    #[test]
+    fn every_injection_filter_uses_the_shared_predicate() {
+        let src = include_str!("context.rs");
+        // Only the implementation — the test module below quotes both strings.
+        let impl_src = &src[..src.find("mod tests {").expect("test module marker")];
+
+        let lines: Vec<&str> = impl_src.lines().collect();
+        let mut scored = 0;
+        for (i, line) in lines.iter().enumerate() {
+            if !line.contains(".filter(|h| h.score >= min_score)") {
+                continue;
+            }
+            scored += 1;
+            let next = lines.get(i + 1).copied().unwrap_or("");
+            assert!(
+                next.contains("injectable_source"),
+                "line {} scores hits but the next filter is not injectable_source:\n  {}\n  {}",
+                i + 1,
+                line.trim(),
+                next.trim()
+            );
+        }
         assert!(
-            injectable_at_phase("prompt", "decision:x", false),
-            "decisions must remain injectable at prompt phase"
+            scored >= 3,
+            "found only {scored} scored hit pipelines — the scan stopped matching"
         );
+
+        let wired = impl_src.matches("injectable_source(&h.source").count();
         assert!(
-            injectable_at_phase("prompt", "edit:y", false),
-            "edits must remain injectable at prompt phase"
+            wired >= 4,
+            "only {wired} injection filters call injectable_source; there are four recall \
+             pipelines and each must demote telemetry"
         );
     }
 
     #[test]
-    fn injectable_at_phase_keeps_toolcalls_post_tool() {
-        assert!(
-            injectable_at_phase("post_tool", "lunaris:tool_call:post", false),
-            "tool captures are on-topic at post_tool phase"
-        );
-    }
-
-    #[test]
-    fn injectable_at_phase_toggle_restores_toolcalls() {
-        assert!(
-            injectable_at_phase("prompt", "lunaris:tool_call:post", true),
-            "LUNARIS_CONTEXT_PROMPT_INCLUDE_TOOLCALLS=1 must restore tool captures at prompt phase"
-        );
+    fn injectable_source_toggle_restores_toolcalls() {
+        for source in ["lunaris:tool_call:post", "lunaris:pre_tool_use"] {
+            assert!(
+                injectable_source(source, true),
+                "the include-toolcalls toggle must restore {source}"
+            );
+        }
     }
 
     // --- hook-source-prefix-lunaris: the new unified `lunaris:` namespace ---
@@ -2890,11 +2972,10 @@ mod tests {
         assert!(is_toolcall_capture("lunaris:tool_call:pre"));
         assert!(is_toolcall_capture("lunaris:post_tool_use"));
         assert!(is_toolcall_capture("lunaris:pre_tool_use"));
-        // still excluded from prompt phase, still kept at post_tool
-        assert!(!injectable_at_phase("prompt", "lunaris:tool_call:post", false));
-        assert!(!injectable_at_phase("prompt", "lunaris:post_tool_use", false));
-        assert!(injectable_at_phase("post_tool", "lunaris:tool_call:post", false));
-        assert!(injectable_at_phase("prompt", "lunaris:tool_call:post", true));
+        // W4.4: excluded from injection everywhere, restored by the toggle.
+        assert!(!injectable_source("lunaris:tool_call:post", false));
+        assert!(!injectable_source("lunaris:post_tool_use", false));
+        assert!(injectable_source("lunaris:tool_call:post", true));
     }
 
     #[test]
