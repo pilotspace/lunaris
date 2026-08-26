@@ -9,216 +9,16 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::HashMap;
-use std::sync::Arc;
+mod common;
 
-use async_trait::async_trait;
-use bytes::Bytes;
-use futures::stream::{self, BoxStream, StreamExt};
-use lunaris::Lunaris;
 use lunaris_core::activation::{ActivationRecord, Grain, RefSignal, Strength};
-use lunaris_core::keyspace::{activation_key, chunk_key, episode_key};
-use lunaris_core::{
-    BiTemporal, Chunk, CypherDialect, CypherQuery, Episode, Filter, GraphResult, Hlc, HlcClock,
-    Lsn, QueueMsg, Row, Scope, StorageCapabilities, StorageError, StoragePort, VectorHit, WriteOp,
-};
+use lunaris_core::keyspace::activation_key;
+use lunaris_core::{HlcClock, Scope, StoragePort};
 use lunaris_retrieve::{BoostProvider, LedgerBoostProvider, Query, Vector};
-use parking_lot::Mutex;
+use std::sync::Arc;
 use ulid::Ulid;
 
-// ---------------------------------------------------------------------------
-// Fixture — mirrors BoostTestStorage from phase_14_2_reflect_boost.rs.
-// ---------------------------------------------------------------------------
-
-#[derive(Default)]
-struct LedgerTestStorage {
-    fixed_hits: Mutex<Vec<VectorHit>>,
-    rows: Mutex<HashMap<Vec<u8>, Row<Bytes>>>,
-    write_batches: Mutex<Vec<Vec<WriteOp>>>,
-    /// When set, `atomic_write` always fails (reject-2 fixture).
-    fail_writes: std::sync::atomic::AtomicBool,
-}
-
-impl LedgerTestStorage {
-    fn new(hits: Vec<VectorHit>) -> Self {
-        let s = Self::default();
-        *s.fixed_hits.lock() = hits;
-        s
-    }
-
-    fn seed(&self, key: Vec<u8>, value: Vec<u8>) {
-        self.rows.lock().insert(
-            key.clone(),
-            Row { key, value: Bytes::from(value), bt: BiTemporal::at(Hlc::ZERO, Hlc::ZERO) },
-        );
-    }
-
-    fn write_count(&self) -> usize {
-        self.write_batches.lock().len()
-    }
-
-    fn last_batch(&self) -> Vec<WriteOp> {
-        self.write_batches.lock().last().cloned().unwrap_or_default()
-    }
-}
-
-#[async_trait]
-impl StoragePort for LedgerTestStorage {
-    async fn atomic_write(&self, _scope: &Scope, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
-        if self.fail_writes.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(StorageError::Backend(
-                "ledger_test_storage: forced atomic_write failure".into(),
-            ));
-        }
-        {
-            let mut rows = self.rows.lock();
-            for op in ops {
-                if let WriteOp::KvPut { key, value } = op {
-                    rows.insert(
-                        key.clone(),
-                        Row {
-                            key: key.clone(),
-                            value: value.clone().into(),
-                            bt: BiTemporal::at(Hlc::ZERO, Hlc::ZERO),
-                        },
-                    );
-                }
-            }
-        }
-        self.write_batches.lock().push(ops.to_vec());
-        Ok(Lsn { wall_ms: 1, counter: self.write_batches.lock().len() as u32 })
-    }
-
-    async fn read_as_of(
-        &self,
-        _scope: &Scope,
-        key: &[u8],
-        _t: Hlc,
-    ) -> Result<Option<Row<Bytes>>, StorageError> {
-        Ok(self.rows.lock().get(key).cloned())
-    }
-
-    async fn publish(
-        &self,
-        _s: &Scope,
-        _t: &str,
-        _p: u16,
-        _payload: Bytes,
-    ) -> Result<u64, StorageError> {
-        Ok(0)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn vector_search(
-        &self,
-        _scope: &Scope,
-        _index: &str,
-        _query: &[f32],
-        _k: usize,
-        _filter: Option<&Filter>,
-        _as_of: Option<Hlc>,
-        _rerank: bool,
-    ) -> Result<Vec<VectorHit>, StorageError> {
-        Ok(self.fixed_hits.lock().clone())
-    }
-
-    async fn graph_traverse(
-        &self,
-        _s: &Scope,
-        _q: &CypherQuery,
-        _t: Option<Hlc>,
-    ) -> Result<GraphResult, StorageError> {
-        Ok(GraphResult::default())
-    }
-
-    async fn scan_range(
-        &self,
-        _scope: &Scope,
-        prefix: &[u8],
-        _as_of: Option<Hlc>,
-    ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
-        let rows = self.rows.lock();
-        let matches: Vec<Result<(Bytes, Bytes), StorageError>> = rows
-            .iter()
-            .filter(|(k, _)| k.starts_with(prefix))
-            .map(|(k, v)| Ok((Bytes::from(k.clone()), v.value.clone())))
-            .collect();
-        Ok(stream::iter(matches).boxed())
-    }
-
-    async fn subscribe(
-        &self,
-        _s: &Scope,
-        _g: &str,
-        _t: &str,
-        _p: u16,
-    ) -> Result<BoxStream<'static, Result<QueueMsg, StorageError>>, StorageError> {
-        Err(StorageError::NotSupported("LedgerTestStorage::subscribe"))
-    }
-
-    fn capabilities(&self) -> StorageCapabilities {
-        StorageCapabilities {
-            bi_temporal_native: true,
-            graph_native: false,
-            rerank_native: false,
-            queue_native: false,
-            max_vector_dim: 4,
-            native_rrf: false,
-            max_scopes_recommended: 0,
-            cypher_dialect: CypherDialect::Legacy,
-            graph_decay_native: false,
-            graph_navigate_native: false,
-        }
-    }
-}
-
-fn stub_embedding() -> Vec<f32> {
-    vec![1.0, 0.0, 0.0, 0.0]
-}
-
-fn seed_chunk(
-    storage: &LedgerTestStorage,
-    scope: &Scope,
-    chunk_id: Ulid,
-    ep_id: Ulid,
-    text: &str,
-    clock: &HlcClock,
-) {
-    let chunk = Chunk {
-        id: chunk_id,
-        scope: scope.clone(),
-        episode_id: ep_id,
-        text: text.to_string(),
-        tokens: 5,
-        offset: 0,
-        heading_path: vec![],
-        overlap_tail: String::new(),
-        embedding: Some(stub_embedding()),
-        bt: BiTemporal::now(clock),
-        parent_id: None,
-    };
-    storage.seed(chunk_key(scope, chunk_id), serde_json::to_vec(&chunk).unwrap());
-
-    let ep = Episode::new(scope.clone(), "test:source", "test episode text", clock);
-    let mut ep_val = serde_json::to_value(&ep).unwrap();
-    ep_val["id"] = serde_json::Value::String(ep_id.to_string());
-    storage.seed(episode_key(scope, ep_id), serde_json::to_vec(&ep_val).unwrap());
-}
-
-fn vector_hit(id: Ulid, score: f32) -> VectorHit {
-    VectorHit {
-        id: id.to_bytes().to_vec(),
-        score,
-        rerank_applied: false,
-        metadata: serde_json::Value::Null,
-    }
-}
-
-fn make_handle(storage: Arc<LedgerTestStorage>) -> Lunaris {
-    let embedder: Arc<dyn lunaris_core::Embedder> = Arc::new(lunaris_core::StubEmbedder::new(4));
-    let clock = HlcClock::new(0);
-    Lunaris::with_parts(storage as Arc<dyn StoragePort>, embedder, clock)
-}
+use common::{LedgerTestStorage, make_handle, seed_chunk, vector_hit};
 
 // ---------------------------------------------------------------------------
 // Test 1 — scenarios 1+2: upsert math through the engine writer, batched flush.
@@ -355,10 +155,24 @@ async fn reinforced_memory_outranks_across_handles() {
         "A's persisted activation must outrank equal-similarity B: {hits:#?}"
     );
 
-    // Without the provider wired, the pre-boost order (B first) is preserved.
-    let hits_unwired =
+    // W1.8 — CONTRACT CORRECTION, not a weakened check. This block used to
+    // assert that a default `dsl()` builder ignores the ledger ("without the
+    // provider, pre-boost order must hold"). That was the frozen contract that
+    // made `record_activation_refs` a public write half with no reachable read
+    // half, so it is corrected rather than routed around. `dsl()` now carries
+    // the provider on every surface, so the SAME ledger row that flips the tie
+    // above must flip it here too — with nothing wired by hand.
+    let hits_default =
         scoped2.dsl().with_root(Vector::new("chunks", 30)).execute(Query::text("q")).await.unwrap();
-    assert_eq!(hits_unwired[0].text, "chunk B", "without the provider, pre-boost order must hold");
+    assert_eq!(
+        hits_default[0].text, "chunk A",
+        "the default builder must read the same ledger the explicit provider does"
+    );
+
+    // The `LUNARIS_ACTIVATION_BOOST=0` opt-out is asserted in its own test
+    // BINARY (`tests/activation_boost_optout.rs`) — env mutation is
+    // process-global and the other nine tests in this file run in parallel
+    // without an env guard, so toggling it here would race them.
 }
 
 // ---------------------------------------------------------------------------
@@ -675,4 +489,60 @@ async fn archived_source_gets_zero_boost_but_stays_recallable() {
         hits[0].text, "chunk B",
         "only B's surviving boost applies now that A is archived — the tie flips to B: {hits:#?}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// W1.8 cost guard — the ledger read now lands on EVERY surface, so its cost
+// per recall has to be pinned, not assumed.
+// ---------------------------------------------------------------------------
+
+/// `LedgerBoostProvider::priors` documents that its storage cost "MUST be
+/// bounded by the ids slice — one batched pass whose storage cost is
+/// proportional to the HIT SET, never to the scope's total". Before W1.8 that
+/// MUST was unchecked prose and only the memory-service paid it. Now every
+/// caller of `dsl()` does, including HTTP and all three SDKs, so it gets a
+/// test: exactly one ledger read per DISTINCT hit, and none at all when the
+/// caller opts out.
+///
+/// This is the guard that turns "the cost is fine" from an assumption into a
+/// measurement. A regression that made priors scan the scope, or issue a read
+/// per leg rather than per hit, would show up here as a count, not as a
+/// latency wobble nobody can attribute.
+#[tokio::test]
+async fn ledger_read_cost_is_one_point_read_per_distinct_hit() {
+    let scope = Scope::new("test.ledger-read-cost").unwrap();
+    let clock = HlcClock::new(0);
+
+    // Three hits, three distinct parent episodes, EMPTY ledger — the shape a
+    // caller who never writes reinforcement signals actually has.
+    let ids: Vec<(Ulid, Ulid)> = (0..3).map(|_| (Ulid::new(), Ulid::new())).collect();
+    let storage =
+        Arc::new(LedgerTestStorage::new(ids.iter().map(|(id, _)| vector_hit(*id, 0.80)).collect()));
+    for (i, (id, ep)) in ids.iter().enumerate() {
+        seed_chunk(&storage, &scope, *id, *ep, &format!("chunk {i}"), &clock);
+    }
+
+    let handle = make_handle(storage.clone());
+    let scoped = handle.scoped(scope.clone());
+
+    storage.reads.lock().clear();
+    let hits = scoped
+        .dsl()
+        .with_root(Vector::new("chunks", 30))
+        .execute(Query::text("q"))
+        .await
+        .expect("recall must succeed against an empty ledger");
+    assert_eq!(hits.len(), 3);
+
+    let ledger_reads = storage.ledger_reads(&scope);
+    assert_eq!(
+        ledger_reads.len(),
+        3,
+        "one ledger point read per distinct hit — no more (a per-leg or \
+         per-scope read pattern is a latency regression on every surface) and \
+         no fewer (fewer means some hits silently skip their prior). Reads: \
+         {ledger_reads:?}"
+    );
+    let distinct: std::collections::HashSet<_> = ledger_reads.iter().collect();
+    assert_eq!(distinct.len(), ledger_reads.len(), "no key may be read twice");
 }

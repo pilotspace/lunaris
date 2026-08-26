@@ -13,10 +13,7 @@ use std::sync::Arc;
 use chrono::DateTime;
 use lunaris::Query;
 use lunaris_core::{Hlc, snippet};
-use lunaris_retrieve::{
-    LedgerBoostProvider, Reranker, RetrievalBuilder, Retriever, Vector, production_root,
-    production_root_reranked,
-};
+use lunaris_retrieve::{Reranker, Retriever, Vector, production_root, production_root_reranked};
 use serde::{Deserialize, Serialize};
 
 use crate::ServiceError;
@@ -201,23 +198,19 @@ pub async fn handle(
     let rerank_cfg = lunaris.recall_rerank();
     let rerank_arg = rerank_cfg.enabled.then(|| (lunaris.reranker(), rerank_cfg.top_in));
     let root = recall_root(candidate_k, graph_enabled, rerank_arg);
-    let hits = match with_activation_boost(scoped.dsl().with_root_boxed(root), lunaris)
-        .execute(q.clone())
-        .await
-    {
+    let hits = match scoped.dsl().with_root_boxed(root).execute(q.clone()).await {
         Ok(hits) => hits,
         Err(err) if is_keyword_not_supported(&err) => {
             tracing::debug!(
                 scope = scope.as_str(),
                 "memory.recall keyword branch unsupported; falling back to vector-only"
             );
-            with_activation_boost(
-                scoped.dsl().with_root(Vector::new("chunks", candidate_k)),
-                lunaris,
-            )
-            .execute(q)
-            .await
-            .map_err(ServiceError::LunarisEngine)?
+            scoped
+                .dsl()
+                .with_root(Vector::new("chunks", candidate_k))
+                .execute(q)
+                .await
+                .map_err(ServiceError::LunarisEngine)?
         }
         Err(err) => return Err(ServiceError::LunarisEngine(err)),
     };
@@ -329,18 +322,16 @@ pub fn recall_root(
     }
 }
 
-/// ADD task activation-ledger — wire the persistent activation-ledger prior
-/// into the SERVICE recall path (the path the hook and MCP tools actually
-/// execute; built≠wired). Opt-out via `LUNARIS_ACTIVATION_BOOST=0`; the
-/// default SDK `Lunaris::recall()` / `.dsl()` surfaces stay unwired per the
-/// frozen contract, so library consumers are untouched.
-fn with_activation_boost(builder: RetrievalBuilder, lunaris: &Lunaris) -> RetrievalBuilder {
-    let enabled = std::env::var("LUNARIS_ACTIVATION_BOOST").map(|v| v != "0").unwrap_or(true);
-    if !enabled {
-        return builder;
-    }
-    builder.with_boost_provider(Arc::new(LedgerBoostProvider::new(lunaris.storage())))
-}
+// W1.8 — `with_activation_boost` lived here and wired the prior onto the
+// SERVICE builder only, leaving `Lunaris::recall()` / `.dsl()` unwired "per
+// the frozen contract". That contract is what made
+// `ScopedLunaris::record_activation_refs` a public write half with no
+// reachable read half. The wiring moved to `crates/lunaris/src/recall.rs`,
+// the single construction site every surface funnels through, so this helper
+// is now redundant: `scoped.dsl()` arrives already carrying the provider.
+// Deleting it rather than leaving a second copy is deliberate — two wiring
+// sites reading the same env var is how the toggle starts meaning different
+// things on different surfaces.
 
 /// Convert a 16-byte ULID to its canonical 26-char string representation.
 /// Falls back to an empty string for malformed byte slices (should never happen

@@ -12,8 +12,10 @@
 //! the variant that reads the verifier-queue depth and seeds the builder
 //! with `initial_degraded` (VERIFY-05 + VERIFY-06).
 
+use std::sync::Arc;
+
 use lunaris_core::LunarisError;
-use lunaris_retrieve::RetrievalBuilder;
+use lunaris_retrieve::{LedgerBoostProvider, RetrievalBuilder};
 // Plan 05-05 OPS-05 — `Instrument::instrument` wraps the per-call body in the
 // `lunaris.recall` info_span so per-call `correlation_id` field-recording
 // + downstream child-span propagation works (CONTEXT.md D-24).
@@ -38,6 +40,21 @@ const VERIFY_TOPIC: &str = "__lunaris_verify__";
 /// [`Lunaris::recall`]. Matches the pre-GA-1 `Vector::new("chunks", 30)`
 /// candidate width and blueprint §4.2's top-30 sizing.
 const DEFAULT_RECALL_K: usize = 30;
+
+/// Env var gating the ACT-R activation-ledger prior on EVERY recall surface.
+pub const ENV_ACTIVATION_BOOST: &str = "LUNARIS_ACTIVATION_BOOST";
+
+/// W1.8 — one reader for [`ENV_ACTIVATION_BOOST`], so the toggle cannot mean
+/// different things on different surfaces. Default ON; any value except `"0"`
+/// is on, matching the semantics `lunaris-memory-service` shipped since the
+/// activation-ledger task and documented in the configuration reference.
+///
+/// This is deliberately NOT cached in a `OnceLock`: tests flip it per-case,
+/// and an env read per recall is noise beside the k point reads the provider
+/// itself issues.
+pub(crate) fn activation_boost_enabled() -> bool {
+    std::env::var(ENV_ACTIVATION_BOOST).map(|v| v != "0").unwrap_or(true)
+}
 
 impl Lunaris {
     /// Build a [`RetrievalBuilder`] bound to this handle's storage, keyword,
@@ -105,6 +122,42 @@ impl Lunaris {
         // cheap — the underlying LruCache is shared across all RetrievalBuilders
         // spawned from this handle.
         b = b.with_boost_cache(self.boost_cache.clone());
+        // W1.8 — the ACT-R activation-ledger prior, wired HERE so every recall
+        // surface shares one composition, the way GA-1 unified the root below.
+        // `ScopedLunaris::recall` and `dsl()` both call this method, HTTP
+        // `routes/recall.rs` calls `scoped.dsl()`, `lunaris-memory-service`
+        // calls `scoped.dsl()`, and `recall_with_degraded_check` calls
+        // `self.recall()` — so this single line reaches all of them.
+        //
+        // Before this, `ScopedLunaris::record_activation_refs` was public SDK
+        // surface that wrote a ledger the SDK's own recall never read: the
+        // write half reachable, the read half not (neither `BoostProvider` nor
+        // `LedgerBoostProvider` is re-exported from this crate). A public
+        // method whose effect is unobservable through the same API is a defect,
+        // not a default.
+        //
+        // Composes with `with_boost_cache` above rather than replacing it —
+        // they are independent mechanisms (Phase 14.2 reflect deltas vs. the
+        // persistent usage ledger), and `with_boost_provider`'s own contract
+        // says so.
+        //
+        // The workspace has exactly ONE other `RetrievalBuilder::from_handle`
+        // call site — `handle.rs`'s pre-warm task inside `end_turn` — and it
+        // is knowingly excluded, not missed. That builder's results are
+        // discarded (it logs `hits.len()` and drops them); its only job is to
+        // warm the backend's FT/page cache, so a rank prior cannot affect
+        // anything it produces. If you are grepping `from_handle` to find
+        // wiring sites, that is the second hit and this is why it differs.
+        //
+        // COST, stated plainly: `LedgerBoostProvider::priors` issues up to k
+        // bounded-concurrency point reads per recall. A caller who never writes
+        // the ledger pays that for priors that are all exactly 0.0. That is the
+        // same bargain the service path has always made, and
+        // `LUNARIS_ACTIVATION_BOOST=0` opts out of it on every surface at once
+        // — which is the point of wiring it in one place.
+        if activation_boost_enabled() {
+            b = b.with_boost_provider(Arc::new(LedgerBoostProvider::new(self.storage())));
+        }
         // GA-1 (2026-08-17): the default root is THE unified production root
         // (`lunaris_retrieve::production_root`) — one composition, every
         // surface (MCP memory.recall, hook, HTTP /v1/recall, SDK). Graph-OFF

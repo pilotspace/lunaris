@@ -385,6 +385,16 @@ invariant in CLAUDE.md: no test binary links Moon.
    > weaker still, while appearing to align docs with observed behaviour.
    > That is the hazard of tuning a constant to match a symptom whose
    > mechanism has not been established.
+   >
+   > **Widened 2026-08-26 (W1.8).** Whoever re-takes this measurement should
+   > know the surface set changed underneath it. The prior is no longer
+   > applied only on the `lunaris-memory-service` path — it is wired at the
+   > single recall-builder construction site every surface reaches, so HTTP
+   > `/v1/recall`, the three SDKs and hook context injection now apply it too.
+   > A pre-W1.8 observation of "the prior does nothing here" taken on the
+   > SDK or HTTP path was measuring an unwired surface, not a weak prior, and
+   > says nothing about difference #9 either way. Re-take on the fixed curve
+   > AND on the current wiring.
 
 ## 7. How to verify a port
 

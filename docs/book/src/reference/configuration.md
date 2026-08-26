@@ -135,8 +135,8 @@ Per-surface deltas on top of that shared root:
 | Surface | Fact legs | Activation boost | Cross-encoder rerank |
 |---|---|---|---|
 | MCP `memory.recall` (+contextd) | with `LUNARIS_GRAPH_ENABLED` | yes (`LUNARIS_ACTIVATION_BOOST`, default on) | opt-in via `LUNARIS_RECALL_RERANK` |
-| HTTP `/v1/recall` + SDK `Lunaris::recall()` | with `LUNARIS_GRAPH_ENABLED` | no | opt-in via `LUNARIS_RECALL_RERANK` |
-| Hook context injection | always on (`LUNARIS_CONTEXT_RECALL=vector` opts out) | no | never (latency-critical path) |
+| HTTP `/v1/recall` + SDK `Lunaris::recall()` | with `LUNARIS_GRAPH_ENABLED` | yes (`LUNARIS_ACTIVATION_BOOST`, default on) | opt-in via `LUNARIS_RECALL_RERANK` |
+| Hook context injection | always on (`LUNARIS_CONTEXT_RECALL=vector` opts out) | yes (`LUNARIS_ACTIVATION_BOOST`, default on) | never (latency-critical path) |
 
 Rerank is OFF by default on every surface; with it off the bge-reranker GGUF
 is never loaded. When enabled, the stage runs between RRF fusion and the
@@ -151,16 +151,24 @@ the 25 ms p50 recall contract.
 
 | Variable | Default | Controls |
 |---|---|---|
-| `LUNARIS_ACTIVATION_BOOST` | **on** (any value except `0`) | Applies the ACT-R activation-ledger prior to the fused candidate set on the **`lunaris-memory-service` recall path** — MCP `memory.recall`, contextd, `lunaris-cli`. Memories that have been referenced before rank higher than their raw hybrid score alone would place them. Set `LUNARIS_ACTIVATION_BOOST=0` to opt out (`crates/lunaris-memory-service/src/recall.rs`). |
+| `LUNARIS_ACTIVATION_BOOST` | **on** (any value except `0`) | Applies the ACT-R activation-ledger prior to the fused candidate set on **every recall surface** — MCP `memory.recall`, contextd, `lunaris-cli`, HTTP `/v1/recall`, hook context injection, and all three SDKs. Memories that have been referenced before rank higher than their raw hybrid score alone would place them. Set `LUNARIS_ACTIVATION_BOOST=0` to opt out (`crates/lunaris/src/recall.rs`). |
 | `LUNARIS_BOOST_CACHE_CAPACITY` | `10000` | Entries in the in-process activation-boost lookup cache (`crates/lunaris-verify/src/reflect_apply.rs`). Non-numeric / `0` → default. |
 
-> **Read this before you A/B anything.** Because the boost is **on by
-> default** and is **not** applied on the HTTP/SDK path, the same query can
-> rank differently through MCP than through `/v1/recall` — that is by design,
-> but it makes cross-surface comparisons invalid unless you pin the variable.
-> Any benchmark, eval, or regression comparison MUST state which value it ran
-> with, and both arms of an A/B must run with the same one. It is also the
-> first thing to check when recall ordering looks inexplicable in production.
+> **Read this before you A/B anything.** The boost is **on by default on
+> every surface** (W1.8 — it was previously applied only on the
+> `lunaris-memory-service` path, so the same query could rank differently
+> through MCP than through `/v1/recall`; that divergence is gone). Any
+> benchmark, eval, or regression comparison MUST still state which value it
+> ran with, and both arms of an A/B must run with the same one — the prior is
+> a real ranking input, not a tiebreaker. It is also the first thing to check
+> when recall ordering looks inexplicable in production.
+>
+> One consequence worth knowing before you read a flamegraph: with the boost
+> on, every recall issues **one activation-ledger point read per distinct
+> hit** — bounded by the hit set, never by the scope's size, and pinned by
+> `ledger_read_cost_is_one_point_read_per_distinct_hit`. Callers that never
+> write reinforcement signals still pay those reads and get an empty ledger
+> back; `LUNARIS_ACTIVATION_BOOST=0` removes them entirely.
 
 **How much the boost is worth, and for how long.** The prior is additive on a
 hit's fused score, bounded by `BOOST_CAP` (0.30, an asymptote — not a value any
