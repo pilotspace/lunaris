@@ -231,6 +231,102 @@ mod tests {
         assert_eq!(boost_prior(0.0), 0.0);
     }
 
+    // ── F43 — the activation prior is inert in production ──────────────
+    //
+    // `activation()` is `ln(weighted * elapsed^-decay)` with `elapsed` in
+    // SECONDS, and `boost_prior` clamps negatives to zero. So the prior
+    // falls off a CLIFF at `elapsed == weighted^2` seconds and is exactly
+    // 0.0 forever after: 9s for one strong ref, 15 min for ten. Every test
+    // below is written against a memory with a REAL usage history at a
+    // REALISTIC age — the regime the ledger exists to serve.
+
+    /// A ladder of ages for one fixed usage history. Returns the realized
+    /// prior at each age, oldest last.
+    fn prior_ladder(weighted: f64) -> Vec<(u64, f32)> {
+        [10u64, 60, 600, 3_600, 21_600, 86_400, 604_800]
+            .iter()
+            .map(|&secs| {
+                let r = ActivationRecord {
+                    n: 1,
+                    weighted,
+                    first_ref_wall: 0,
+                    last_ref_wall: 0,
+                    last_grain: Grain::default(),
+                    last_strength: Strength::default(),
+                    v: 1,
+                    archived_at: None,
+                };
+                (secs, boost_prior(r.activation(secs, DEFAULT_DECAY)))
+            })
+            .collect()
+    }
+
+    /// The headline defect. Ten strong references an hour ago is a
+    /// well-used memory by any reading, and it earns exactly nothing.
+    #[test]
+    fn f43_a_well_used_memory_still_earns_a_prior_after_an_hour() {
+        let ladder = prior_ladder(30.0); // 10 strong refs
+        let (_, at_one_hour) = ladder[3];
+        assert!(
+            at_one_hour > 0.0,
+            "10 strong refs one hour old must still carry a prior; ladder = {ladder:?}"
+        );
+    }
+
+    /// The ledger's whole purpose is to rank by usage. Today it cannot tell
+    /// 50 references from 1 at any age past the cliff — both are 0.0, which
+    /// is also what a NEVER-referenced memory scores.
+    #[test]
+    fn f43_usage_history_is_discriminating_at_realistic_ages() {
+        for secs in [3_600u64, 86_400, 604_800] {
+            let heavy = prior_ladder(150.0);
+            let light = prior_ladder(3.0);
+            let h = heavy.iter().find(|(s, _)| *s == secs).unwrap().1;
+            let l = light.iter().find(|(s, _)| *s == secs).unwrap().1;
+            assert!(
+                h > l,
+                "at {secs}s: 50 strong refs ({h}) must outrank 1 strong ref ({l})"
+            );
+        }
+    }
+
+    /// Decay must be a curve, not a cliff: strictly monotone decreasing
+    /// across the whole realistic range, with no run of tied zeros.
+    #[test]
+    fn f43_prior_decays_strictly_and_never_flatlines_to_zero() {
+        let ladder = prior_ladder(30.0);
+        for w in ladder.windows(2) {
+            let ((s0, p0), (s1, p1)) = (w[0], w[1]);
+            assert!(
+                p1 < p0,
+                "prior must strictly decrease {s0}s -> {s1}s, got {p0} -> {p1}; ladder = {ladder:?}"
+            );
+            assert!(p1 > 0.0, "prior flatlined to zero at {s1}s; ladder = {ladder:?}");
+        }
+    }
+
+    /// The invariant the fix must NOT break, and the reason this cannot be
+    /// fixed by adding a constant: a memory nobody ever referenced has
+    /// `weighted == 0.0`, so `activation` is `-inf` and the prior must be
+    /// EXACTLY zero. A fix that lifts the floor for everyone fails here.
+    #[test]
+    fn f43_a_never_referenced_memory_earns_exactly_zero() {
+        let ladder = prior_ladder(0.0);
+        for (secs, p) in ladder {
+            assert_eq!(p, 0.0, "never-referenced memory got {p} at {secs}s");
+        }
+    }
+
+    /// A corrupt record must not poison the ranking with NaN. The old
+    /// `.max(0.0)` swallowed this by accident (Rust's `f64::max` returns the
+    /// non-NaN operand); any replacement has to handle it on purpose.
+    #[test]
+    fn f43_a_nan_activation_yields_zero_not_nan() {
+        let p = boost_prior(f64::NAN);
+        assert!(p.is_finite(), "NaN activation produced {p}");
+        assert_eq!(p, 0.0);
+    }
+
     #[test]
     fn boost_prior_never_exceeds_cap() {
         for a in [0.1, 1.0, 10.0, 1_000.0, 1_000_000.0] {
