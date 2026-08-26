@@ -117,7 +117,8 @@ on $incumbent if…" criteria:
   `ScopedLunaris::forget`.
 - **Ecosystem (shipped)** — LangGraph / CrewAI / Letta adapters via the
   `lunaris-integrations` package (`pip install lunaris-integrations[langgraph]`,
-  `[crewai]`, `[letta]`). The "drop Lunaris into your existing agent framework"
+  `[crewai]`, `[letta]` — published from the next `v*` tag; until then install
+  it from a checkout, see [`integrations/README.md`](https://github.com/pilotspace/lunaris/blob/main/integrations/README.md)). The "drop Lunaris into your existing agent framework"
   experience: LangGraph and CrewAI are drop-in store / storage classes; Letta
   ships as a client-backed connector shim + recipe (its archival store is
   server-side). The MCP server remains the universal shim for frameworks

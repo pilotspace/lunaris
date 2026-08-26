@@ -4,8 +4,19 @@ Memory adapters that drop Lunaris into your existing agent framework. One thin,
 transport-agnostic layer — pick a transport once, reuse it across every adapter.
 
 ```bash
-pip install "lunaris-integrations[langgraph]"   # or [crewai] / [letta]
+pip install -e "path/to/lunaris/integrations[langgraph]"   # or [crewai] / [letta]
 ```
+
+`lunaris-integrations` is not on PyPI **yet**. `integrations-publish.yml`
+builds and uploads it on a `v*` tag, so from the next release on the line is:
+
+```bash
+pip install "lunaris-integrations[langgraph]"
+```
+
+Until that tag lands, install from a checkout with the `-e` form above — the
+one the [examples](../examples/) and CI both use, so it is the path that is
+actually exercised.
 
 ## Why a separate package
 
@@ -49,7 +60,7 @@ Runnable per-framework examples live in [`../examples/`](../examples/):
 ## Tests
 
 ```bash
-pip install "lunaris-integrations[langgraph,crewai,letta,test]"
+pip install -e ".[langgraph,crewai,letta,test]"   # from integrations/
 pytest tests/
 ```
 

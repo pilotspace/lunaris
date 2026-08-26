@@ -96,6 +96,22 @@ fi
 sed -i.bak -E "${py_mcp_line}s/^(version[[:space:]]*=[[:space:]]*)\".*\"/\\1\"$VER\"/" "$py_mcp_pyproject"
 rm -f "$py_mcp_pyproject.bak"
 
+# integrations/pyproject.toml — the pure-Python `lunaris-integrations`
+# adapters. Added 2026-08-26 (W4.7): it was NOT on this list, so it sat at
+# 0.7.0 through the whole 0.7.1 release while every other surface moved.
+# `integrations-publish.yml` uploads it on a `v*` tag, so a stale number here
+# publishes the previous release's version to PyPI. Guarded by
+# scripts/tests/test_published_distributions.py.
+echo "-> Bumping integrations/pyproject.toml [project].version to $VER"
+integrations_pyproject="integrations/pyproject.toml"
+integrations_line=$(grep -nE '^version[[:space:]]*=[[:space:]]*"' "$integrations_pyproject" | head -1 | cut -d: -f1 || true)
+if [[ -z "$integrations_line" ]]; then
+  echo "ERROR: could not find version line in $integrations_pyproject" >&2
+  exit 4
+fi
+sed -i.bak -E "${integrations_line}s/^(version[[:space:]]*=[[:space:]]*)\".*\"/\\1\"$VER\"/" "$integrations_pyproject"
+rm -f "$integrations_pyproject.bak"
+
 echo "-> Bumping crates/lunaris-mcp-py/python/lunaris_mcp/__init__.py __version__ to $VER"
 py_mcp_init="crates/lunaris-mcp-py/python/lunaris_mcp/__init__.py"
 sed -i.bak "s/__version__ = \".*\"/__version__ = \"$VER\"/" "$py_mcp_init"
