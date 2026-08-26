@@ -251,16 +251,78 @@ impl EphemeralMoon {
     }
 }
 
+/// Env var that turns [`EphemeralMoon`]'s drop into a post-mortem (F35).
+///
+/// Set it to any non-empty value to make drop report whether the child was
+/// still ALIVE, and to keep the scratch directory (with `moon.log`) instead
+/// of deleting it.
+pub const KEEP_ENV: &str = "LUNARIS_TEST_MOON_POSTMORTEM";
+
 impl Drop for EphemeralMoon {
     /// Synchronous, best-effort reap. Runs on unwind too, so a panicking test
     /// still leaves no orphan process and no scratch directory.
+    ///
+    /// ## The post-mortem escape hatch (F35)
+    ///
+    /// `lunaris-mcp`'s `record_decision_smoke` / `record_edit_smoke` fail
+    /// under a full workspace run with `moon: redis error: broken pipe`. The
+    /// mechanism is NOT established: it reproduced 2-of-12 once and 0-of-52
+    /// since, including under saturating CPU load, so the original
+    /// "resource contention" reading is unsupported.
+    ///
+    /// Two hypotheses remain and exactly one observation separates them —
+    /// was the Moon alive when the client's socket broke?
+    ///
+    /// - **Child DIED** → the Moon was reaped or crashed. Resource contention.
+    /// - **Child ALIVE** → the socket dropped under a live server, and the
+    ///   read-only wiring of `lunaris_storage_moon::retry::with_conn_retry`
+    ///   becomes the lead (`record_decision` is a write, so a transient
+    ///   `broken pipe` on it has no retry above the SDK's ConnectionManager).
+    ///
+    /// That observation was impossible by default: this `Drop` reaped the
+    /// child and deleted the scratch dir, taking `moon.log` with it. Setting
+    /// [`KEEP_ENV`] preserves both. It is off by default because the normal
+    /// case must leave no orphan process and no scratch directory — the
+    /// hatch trades exactly that away, and only when asked.
     fn drop(&mut self) {
+        let postmortem = postmortem_requested(std::env::var_os(KEEP_ENV).as_deref());
+
         if let Some(mut child) = self.child.take() {
+            if postmortem {
+                // try_wait BEFORE kill: after kill the answer is always
+                // "died", which is the answer we already knew.
+                let state = match child.try_wait() {
+                    Ok(Some(status)) => format!("DIED (exit {status})"),
+                    Ok(None) => "ALIVE".to_string(),
+                    Err(e) => format!("UNKNOWN ({e})"),
+                };
+                eprintln!(
+                    "[{KEEP_ENV}] moon on port {} at drop: {state}; data dir kept at {}",
+                    self.port,
+                    self.dir.display()
+                );
+            }
             let _ = child.kill();
             let _ = child.wait();
         }
+
+        if postmortem {
+            eprintln!("[{KEEP_ENV}] keeping {} — remove it yourself when done", self.dir.display());
+            return;
+        }
         let _ = std::fs::remove_dir_all(&self.dir);
     }
+}
+
+/// Whether [`KEEP_ENV`]'s value asks for the post-mortem.
+///
+/// Split out of `drop` so the decision is testable without mutating
+/// process-global environment from a parallel test. An EMPTY value is a
+/// deliberate NO: `FOO= cargo test` and an exported-but-cleared variable are
+/// both how a shell says "off", and treating mere presence as on would leave
+/// orphan scratch directories behind for anyone who cleared it that way.
+fn postmortem_requested(v: Option<&std::ffi::OsStr>) -> bool {
+    v.is_some_and(|v| !v.is_empty())
 }
 
 /// One RESP `PING`. `true` only on a `+PONG` reply.
@@ -328,5 +390,48 @@ mod tests {
         let b = scratch_dir(1234);
         assert_ne!(a, b, "two draws must not collide");
         assert!(a.starts_with(std::env::temp_dir()), "scratch dir must live under temp_dir");
+    }
+
+    /// F35 — the post-mortem hatch is OFF unless asked for, and an empty
+    /// value is not asking.
+    ///
+    /// Keyed on the accepted SET, not on presence: `LUNARIS_TEST_MOON_POSTMORTEM=`
+    /// and an exported-then-cleared variable are both how a shell says "off".
+    /// A presence check would treat them as on and leave a scratch directory
+    /// per Moon behind on every run — the failure mode the default exists to
+    /// prevent, arriving through the flag meant to be opt-in.
+    #[test]
+    fn the_postmortem_hatch_is_off_unless_asked_for() {
+        use std::ffi::OsStr;
+        assert!(!postmortem_requested(None), "unset must not keep the scratch dir");
+        assert!(!postmortem_requested(Some(OsStr::new(""))), "an EMPTY value must read as off");
+        assert!(postmortem_requested(Some(OsStr::new("1"))));
+        assert!(postmortem_requested(Some(OsStr::new("0"))), "any non-empty value opts in");
+    }
+
+    /// The default reap really removes the directory.
+    ///
+    /// `postmortem_requested` above is a decision, not an effect — a `drop`
+    /// that consulted it and then leaked the dir anyway would pass that test.
+    /// This one drops a real `EphemeralMoon` and looks at the filesystem.
+    #[tokio::test]
+    async fn dropping_a_moon_removes_its_scratch_dir() {
+        let Ok(moon) = EphemeralMoon::spawn().await else {
+            // `spawn` already explains a missing MOON_TEST_BINARY; the
+            // no-silent-skip sweep covers the harness's own skip accounting.
+            crate::strict_skip::note_unavailable(
+                "EphemeralMoon::spawn failed — MOON_TEST_BINARY unset or unusable",
+            );
+            return;
+        };
+        let dir = moon.data_dir().to_path_buf();
+        assert!(dir.exists(), "a started Moon must have its scratch dir");
+        drop(moon);
+        assert!(
+            !dir.exists(),
+            "drop left {} behind — the workspace suite spawns one Moon per test binary, \
+             so a leaked dir per drop fills the boot volume",
+            dir.display()
+        );
     }
 }
