@@ -24,67 +24,20 @@
 //! the pins it needs a real staged granite GGUF (contextd embeds the prompt
 //! in-process), which no ephemeral fixture can supply.
 
-use std::collections::HashMap;
-use std::path::Path;
-use std::time::Duration;
-
 use lunaris_core::keyspace::fact_key;
 use lunaris_core::storage::types::WriteOp;
 use lunaris_core::{Episode, HlcClock, Scope, StubEmbedder};
 use lunaris_extract::types::{EntityId, Fact};
 use lunaris_test_harness::open_test_store;
+use std::collections::HashMap;
+
+mod contextd_harness;
+use contextd_harness::{memory_env, request, spawn_contextd};
 use serde_json::{Value, json};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::UnixStream;
-use tokio::process::{Child, Command};
 use ulid::Ulid;
 
 const FACT_TEXT: &str = "the zephyr-relay service listens on port 7443";
 const PROMPT: &str = "which port does the zephyr-relay service listen on?";
-
-// ─── contextd harness ────────────────────────────────────────────────────────
-
-/// Spawn the real `lunaris-contextd` binary on a temp socket with the given
-/// extra env; wait until the socket accepts connections.
-async fn spawn_contextd(socket: &Path, extra_env: &HashMap<&str, String>) -> Child {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_lunaris-contextd"));
-    cmd.arg("--socket")
-        .arg(socket)
-        .env_remove("LUNARIS_CONTEXT_RECALL")
-        .env_remove("LUNARIS_CONTEXT_RECALL_TIMEOUT_MS")
-        .env_remove("LUNARIS_STORE_URL")
-        .kill_on_drop(true);
-    for (k, v) in extra_env {
-        cmd.env(k, v);
-    }
-    let child = cmd.spawn().expect("spawn lunaris-contextd");
-
-    for _ in 0..200 {
-        if UnixStream::connect(socket).await.is_ok() {
-            return child;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    panic!("lunaris-contextd never bound {}", socket.display());
-}
-
-/// One request/response round-trip over the contextd socket protocol
-/// (write JSON, shutdown write half, read to EOF).
-async fn request(socket: &Path, body: &Value) -> Value {
-    let round_trip = async {
-        let mut stream = UnixStream::connect(socket).await.expect("connect contextd socket");
-        stream.write_all(body.to_string().as_bytes()).await.expect("write request");
-        stream.shutdown().await.expect("shutdown write half");
-        let mut buf = Vec::new();
-        stream.read_to_end(&mut buf).await.expect("read response");
-        serde_json::from_slice::<Value>(&buf).expect("contextd responds with JSON")
-    };
-    // Generous budget: the FIRST request lazily opens the Lunaris handle and
-    // loads the GGUF embedder inside the contextd process.
-    tokio::time::timeout(Duration::from_secs(180), round_trip)
-        .await
-        .expect("contextd answered within budget")
-}
 
 fn recall_for_prompt(scope: &str) -> Value {
     json!({
@@ -207,16 +160,6 @@ async fn fact_surfaces_in_injected_context_moon() {
 ///
 /// 0.7.0 port off `memory://`: the URL is threaded in from a fixture the
 /// caller holds open for the child's lifetime.
-fn memory_env(store_url: &str) -> HashMap<&'static str, String> {
-    let mut env = HashMap::new();
-    env.insert("LUNARIS_STORE_URL", store_url.to_owned());
-    // Force the fast NoopEmbedder fallback — these pins exercise routing, not
-    // embedding quality, and must stay CI-cheap.
-    env.insert("LUNARIS_EMBEDDER_GGUF", "/nonexistent/embedder.gguf".to_owned());
-    env.insert("LUNARIS_RERANKER_GGUF", "/nonexistent/reranker.gguf".to_owned());
-    env
-}
-
 /// §2 scenario 3 — "hybrid failure/timeout degrades, never blocks":
 /// TIMEOUT_MS=0 forces an instant hybrid timeout; the response must be
 /// exactly what the legacy path serves (control run), and the connection

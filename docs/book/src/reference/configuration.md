@@ -348,7 +348,8 @@ exceeding one degrades to injecting nothing, never to blocking the turn.
 | `LUNARIS_CONTEXT_POST_TOOL_MAX_CHARS` | `900` | Same budget for post-tool-call injection (falls back to `LUNARIS_CONTEXT_MAX_CHARS`). |
 | `LUNARIS_CONTEXT_POST_TOOL_MIN_SCORE` | `0.60` | Score floor post-tool (falls back to `LUNARIS_CONTEXT_MIN_SCORE`). Higher than the prompt floor on purpose — a mid-turn interruption must clear a higher bar. |
 | `LUNARIS_CONTEXT_DIGEST_MAX_CHARS` | `2000` | Character budget for the SessionStart digest. |
-| `LUNARIS_CONTEXT_PROMPT_INCLUDE_TOOLCALLS` | off | `1` restores raw tool-call captures to prompt-phase injection. Off by default because they crowd out durable decisions and edits. |
+| `LUNARIS_CONTEXT_INCLUDE_TOOLCALLS` | off | `1` restores raw tool-call captures to context injection at every phase. Off by default: they are substrate, not context. A census of a live store found 99.9% of injected memories were raw tool calls and two were curated, so the agent was reading its own shell history instead of its decisions. Captures are still written, still stored and still returned by `memory.recall` — only the automatic injection is off. |
+| `LUNARIS_CONTEXT_PROMPT_INCLUDE_TOOLCALLS` | off | Deprecated alias for the row above, still honoured. It used to lift the exclusion at the `prompt` phase only, which was the whole exclusion at the time; now it lifts it everywhere. Prefer `LUNARIS_CONTEXT_INCLUDE_TOOLCALLS`. |
 | `LUNARIS_HOOK_CONTEXT_BUDGET_MS` | `250` | Wall-clock budget for building handover context. Clamped to `[10, 10000]`. |
 | `LUNARIS_HOOK_DROP_AFTER_MS` | `100` | Emergency-drop deadline (HOOK-06): past this the hook warns and exits `0` rather than delaying the agent. Clamped to `[10, 10000]`. |
 | `LUNARIS_TRANSCRIPT_TAIL_BYTES` | `4194304` (4 MiB) | How much of a transcript file's tail the hook reads per turn. |
@@ -451,7 +452,8 @@ resolution is explicit → contextd-advertised → refuse-to-boot; see
 | `LUNARIS_CONTEXT_MAX_HITS` / `_MIN_SCORE` / `_MAX_CHARS` | `5` / `0.55` / `1600` | Prompt-phase injection budget: max memories, min cosine score, char cap |
 | `LUNARIS_CONTEXT_POST_TOOL_MAX_HITS` / `_MIN_SCORE` / `_MAX_CHARS` | `3` / `0.60` / `900` | Post-tool-call injection budget |
 | `LUNARIS_CONTEXT_DIGEST_MAX_HITS` / `_MAX_CHARS` | `8` / `2000` | SessionStart digest budget |
-| `LUNARIS_CONTEXT_PROMPT_INCLUDE_TOOLCALLS` | off | `1`/`true` re-includes raw tool-call captures in prompt-phase injection (excluded by default as low-signal) |
+| `LUNARIS_CONTEXT_INCLUDE_TOOLCALLS` | off | `1`/`true` re-includes raw tool-call captures in context injection at every phase (excluded by default — substrate, not context) |
+| `LUNARIS_CONTEXT_PROMPT_INCLUDE_TOOLCALLS` | off | Deprecated alias for the row above; still honoured |
 | `LUNARIS_CONTEXT_EMBED_CACHE_MAX` | `256` | Max entries in contextd's query-embedding cache (cleared wholesale when full, not LRU) |
 | `LUNARIS_CONTEXT_PROFILE` | off | Exactly `1` (not `true`) emits latency breadcrumbs for recall / embedding / promotion |
 | `LUNARIS_INFER_WATCHDOG_MS` | `120000` | Per-inference-call timeout in contextd; a timed-out call fails only that request (recall fail-opens) |
