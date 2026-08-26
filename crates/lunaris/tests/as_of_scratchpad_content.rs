@@ -229,3 +229,66 @@ async fn a_stopword_like_path_is_readable_not_an_error() {
     );
     assert_eq!(got.as_deref(), Some("SHORT_NAME_BODY"));
 }
+
+/// Defect 2, on the OTHER path — the ranked fallback must also resolve to the
+/// CURRENT version, not the best-ranked one.
+///
+/// The tests above all take the F40 source-index fast path, so they cannot see
+/// how the fallback picks among versions: mutation-checking showed all four
+/// still pass with the index disabled AND with the fallback reverted to
+/// `.next()`. An unverified half of a fix is not a fix, so this test reaches
+/// the fallback deliberately (by deleting the sidecar) and rigs RANK ORDER
+/// against RECENCY — v1's body echoes the path name, v2's does not — so a
+/// rank-ordered `.next()` returns the stale body and only recency-ordering
+/// returns the live one.
+#[tokio::test]
+async fn the_ranked_fallback_returns_the_current_version_not_the_best_ranked_one() {
+    let Some(url) = moon_url() else { return };
+    // Built inline rather than via `pad_in` because this test needs the scope
+    // and session id to address the sidecar directly. `CodingSessionMemory`
+    // exposes neither, and it must not start to: its public surface is capped
+    // at ten symbols by the HELIOS-01 contract, and a test is not a reason to
+    // spend one.
+    let scope = Scope::new(format!("f42rank{}", ulid::Ulid::new())).expect("scope");
+    let lunaris = Arc::new(Lunaris::open(&url).await.expect("open"));
+    let session = format!("f42-rank-{}", ulid::Ulid::new());
+    let pad = CodingSessionMemory::new(lunaris.clone(), scope.clone(), &session);
+    // Mirrors `CodingSessionMemory::new`: `{HELIOS_PREFIX}{session_id}/`.
+    let session_prefix = format!("helios:fs/{session}/");
+
+    // v1's body is stuffed with the path token so BM25/vector both favour it.
+    pad.write("recipe", "recipe recipe recipe STALE_V1_BODY recipe recipe")
+        .await
+        .expect("write v1");
+    pad.edit("recipe", "x", "LIVE_V2_BODY totally unrelated wording").await.expect("edit to v2");
+
+    // Drop the F40 sidecar so the read MUST take the ranked fallback. Same
+    // shape `WorkingMemory` writes it in: `{session_prefix}{path}`.
+    let source = format!("{session_prefix}recipe");
+    lunaris
+        .storage()
+        .atomic_write(
+            &scope,
+            &[lunaris_core::WriteOp::KvDelete {
+                key: lunaris_core::keyspace::source_index_key(&scope, &source),
+            }],
+        )
+        .await
+        .expect("delete the source-index sidecar");
+
+    let ts = lunaris.clock().tick();
+    let got = pad
+        .as_of(ts)
+        .read("recipe")
+        .await
+        .expect("as-of read must not error")
+        .expect("as-of read must still find the value without the sidecar");
+
+    assert!(
+        !got.contains("STALE_V1_BODY"),
+        "the ranked fallback returned the SUPERSEDED version because it ranked higher: {got:?}. \
+         Rank order is not version order — episode ids are ULIDs and ULIDs sort by mint time, \
+         so the greatest id is the current version."
+    );
+    assert_eq!(got, "LIVE_V2_BODY totally unrelated wording");
+}

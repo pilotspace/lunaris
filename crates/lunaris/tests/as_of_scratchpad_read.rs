@@ -30,11 +30,20 @@
 //!
 //! ## Why `contains` and not `assert_eq`
 //!
-//! `read_at` reconstructs content from the SEARCH INDEX's text, which is
-//! normalised — an ASCII `"` comes back as `“ … ”`, and each chunk is
-//! concatenated twice. Those are real defects too, recorded separately; they
-//! are not what this file fixes, so it asserts on what is unambiguous: the
-//! written value is present, and the sibling's is not.
+//! When this file was written, `read_at` returned a rewritten, doubled-looking
+//! string, and the cause was recorded here as "the SEARCH INDEX's text, which
+//! is normalised". **That diagnosis was wrong on both counts** and is corrected
+//! in `as_of_scratchpad_content.rs` (F42), which measured it: `Hit::text` is
+//! hydrated from the chunk KV payload, so the index was never involved — the
+//! rewrite is the CHUNKER's `pulldown_cmark::Options::all()`
+//! (`ENABLE_SMART_PUNCTUATION`) applied at ingest; and the repetition was not
+//! chunks appearing twice but SUPERSEDED VERSIONS being concatenated onto the
+//! current one.
+//!
+//! This file still asserts with `contains` rather than `assert_eq`, because
+//! what it fixes is the SCOPE and the FILTER, not the content — keeping it
+//! insensitive to the content defects means F42's fix cannot accidentally be
+//! what makes these tests pass.
 
 #![forbid(unsafe_code)]
 #![deny(rust_2018_idioms, unreachable_pub)]

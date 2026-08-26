@@ -45,9 +45,14 @@ use lunaris_retrieve::{Hit, Keyword, Query, Vector};
 use ulid::Ulid;
 
 /// Default `top_k` the [`MessageStream::recall`] path uses when the caller does
-/// not override via [`MessageStream::with_top_k`]. Chosen to match the Phase 5
-/// `CodingSessionMemory::read` default (8) so conversational wrappers in Phase 10
-/// inherit the same breadth.
+/// not override via [`MessageStream::with_top_k`]. Historically chosen to match
+/// the Phase 5 `CodingSessionMemory::read` default of 8.
+///
+/// That constant no longer exists: F42 deleted `CodingSessionMemory`'s
+/// concatenating read (it rebuilt content from lossy chunk text and glued
+/// superseded versions together), and its `READ_TOP` window went with it. The
+/// value 8 is kept here on its own merits — it is this path's own default
+/// breadth — but it is no longer mirroring anything, so do not "re-sync" it.
 const DEFAULT_TOP_K: usize = 8;
 
 /// ACT-R decay constant `d` per Anderson (1996) — base-level activation
