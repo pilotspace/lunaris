@@ -1315,6 +1315,27 @@ impl<'a> ScopedLunaris<'a> {
         crate::retention::enforce_at(self.engine, &self.scope, now_ms).await
     }
 
+    /// Report what [`Self::enforce_retention`] would sweep, sweeping nothing.
+    ///
+    /// Wave 6 / R1 — the preview half of retention, so a caller (notably the
+    /// LLM-driven `memory.retention_enforce` tool, which previews by default)
+    /// can answer "what would this take?" without recomputing the cutoff.
+    /// See [`crate::retention::preview_at`].
+    pub async fn preview_retention(
+        &self,
+    ) -> Result<crate::retention::RetentionReceipt, LunarisError> {
+        let now_ms = self.engine.clock.tick().wall_ms;
+        crate::retention::preview_at(self.engine, &self.scope, now_ms).await
+    }
+
+    /// [`Self::preview_retention`] against a caller-chosen wall clock.
+    pub async fn preview_retention_at(
+        &self,
+        now_ms: u64,
+    ) -> Result<crate::retention::RetentionReceipt, LunarisError> {
+        crate::retention::preview_at(self.engine, &self.scope, now_ms).await
+    }
+
     /// Read this scope's audit trail over a closed time range.
     ///
     /// W4.6 / D6.3. Until now the audit log was write-only: every producer

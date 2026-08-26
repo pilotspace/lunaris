@@ -34,6 +34,7 @@ pub mod record_edit;
 pub mod remember;
 pub mod repair_vectors;
 pub mod resolve;
+pub mod retention;
 pub mod scratchpad_consolidate;
 pub mod scratchpad_grep;
 pub mod scratchpad_read;

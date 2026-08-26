@@ -54,6 +54,8 @@ const EXPECTED_TOOLS: &[&str] = &[
     "memory.resolve",
     "memory.dream_agenda",
     "memory.distill",
+    "memory.retention",
+    "memory.retention_enforce",
 ];
 
 #[tokio::test]
@@ -109,6 +111,21 @@ async fn server_boots_and_lists_all_tools() {
             "tools/list is missing `{tool}` — a tool was dropped or failed schema validation.\nline: {tools_line}"
         );
     }
+
+    // Wave 6: the loop above is a PRESENCE check, and a presence check passes a
+    // superset — a tool registered in `main.rs` and never added here was
+    // invisible to it, and to every roster page that copies from here. Count
+    // what the server actually answered with.
+    let registered = tools_line.matches("\"memory.").count();
+    assert_eq!(
+        registered,
+        EXPECTED_TOOLS.len(),
+        "the server registers {registered} `memory.*` tools but this guard enumerates {}. \
+         A tool added to main.rs without a line here is unguarded, and the docs guard \
+         (scripts/tests/test_mcp_tool_count_matches_the_server.py) reads main.rs, not this list, \
+         so the two can disagree silently.\nline: {tools_line}",
+        EXPECTED_TOOLS.len()
+    );
 
     // Clean shutdown: closing stdin drives the rmcp loop to EOF; the process
     // must exit 0 (not 101). A non-zero exit signals a startup/shutdown defect.

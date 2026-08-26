@@ -89,6 +89,14 @@ pub enum MemoryRequest {
         scope: String,
         params: crate::profile::ProfileParams,
     },
+    Retention {
+        scope: String,
+        params: crate::retention::RetentionParams,
+    },
+    RetentionEnforce {
+        scope: String,
+        params: crate::retention::RetentionEnforceParams,
+    },
     RecordDecision {
         scope: String,
         params: crate::record_decision::RecordDecisionParams,
@@ -159,6 +167,8 @@ impl MemoryRequest {
             | MemoryRequest::Forget { scope, .. }
             | MemoryRequest::Remember { scope, .. }
             | MemoryRequest::Profile { scope, .. }
+            | MemoryRequest::Retention { scope, .. }
+            | MemoryRequest::RetentionEnforce { scope, .. }
             | MemoryRequest::RecordDecision { scope, .. }
             | MemoryRequest::RecordEdit { scope, .. }
             | MemoryRequest::Feedback { scope, .. }
@@ -184,6 +194,8 @@ impl MemoryRequest {
             MemoryRequest::Forget { .. } => "forget",
             MemoryRequest::Remember { .. } => "remember",
             MemoryRequest::Profile { .. } => "profile",
+            MemoryRequest::Retention { .. } => "retention",
+            MemoryRequest::RetentionEnforce { .. } => "retention_enforce",
             MemoryRequest::RecordDecision { .. } => "record_decision",
             MemoryRequest::RecordEdit { .. } => "record_edit",
             MemoryRequest::Feedback { .. } => "feedback",
@@ -287,6 +299,12 @@ pub async fn dispatch(
         }
         MemoryRequest::Profile { params, .. } => {
             to_value(crate::profile::handle(lunaris, scope, params).await?)
+        }
+        MemoryRequest::Retention { params, .. } => {
+            to_value(crate::retention::handle(lunaris, scope, params).await?)
+        }
+        MemoryRequest::RetentionEnforce { params, .. } => {
+            to_value(crate::retention::handle_enforce(lunaris, scope, params).await?)
         }
         MemoryRequest::RecordDecision { params, .. } => {
             to_value(crate::record_decision::handle(lunaris, scope, params).await?)
