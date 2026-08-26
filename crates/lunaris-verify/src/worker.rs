@@ -279,7 +279,7 @@ pub(crate) async fn process_one(
             return;
         }
 
-        if let Err(e) = publish_arbitration_audit(storage, &result).await {
+        if let Err(e) = publish_arbitration_audit(storage, scope, &result).await {
             tracing::warn!(
                 err = %e,
                 "verify_worker_audit_publish_failed; decision committed but audit lost"
@@ -474,6 +474,7 @@ pub async fn apply_supersede(
 /// `VerifierBackend`.
 async fn publish_arbitration_audit(
     storage: &Arc<dyn StoragePort>,
+    scope: &Scope,
     decision: &VerifyDecision,
 ) -> Result<u64, LunarisError> {
     let backend = serde_json::to_value(decision.backend)
@@ -487,7 +488,7 @@ async fn publish_arbitration_audit(
         backend,
         decided_at_iso: decision.decided_at_iso.clone(),
     };
-    lunaris_core::audit::publish_audit_event(storage, event)
+    lunaris_core::audit::publish_audit_event(storage, scope, event)
         .await
         .map_err(|e| LunarisError::Storage(StorageError::Backend(e.to_string())))
 }

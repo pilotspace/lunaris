@@ -307,10 +307,19 @@ impl Lunaris {
                     audit_lsn: Lsn { wall_ms: 0, counter: 0 },
                     preview: true,
                 };
-                let audit_offset =
-                    publish_audit_event(&self.storage, AuditEvent::Forget((&receipt).into()))
-                        .await
-                        .unwrap_or(0);
+                let audit_offset = publish_audit_event(
+                    &self.storage,
+                    // The deprecated unscoped entry point already reads and
+                    // writes under `Scope::dev()` (see the `atomic_write`
+                    // in this same function); auditing anywhere else would
+                    // file the receipt against a partition the operation
+                    // never touched.
+                    // scope-dev-allowed: deprecated-Lunaris::forget-routes-here-until-v0.4
+                    &lunaris_core::Scope::dev(),
+                    AuditEvent::Forget((&receipt).into()),
+                )
+                .await
+                .unwrap_or(0);
                 return Ok(ForgetReceipt {
                     audit_lsn: Lsn { wall_ms: audit_offset, counter: 0 },
                     ..receipt
@@ -350,10 +359,19 @@ impl Lunaris {
                 audit_lsn: Lsn { wall_ms: 0, counter: 0 },
                 preview: false,
             };
-            let audit_offset =
-                publish_audit_event(&self.storage, AuditEvent::Forget((&receipt).into()))
-                    .await
-                    .unwrap_or(0);
+            let audit_offset = publish_audit_event(
+                &self.storage,
+                // The deprecated unscoped entry point already reads and
+                // writes under `Scope::dev()` (see the `atomic_write`
+                // in this same function); auditing anywhere else would
+                // file the receipt against a partition the operation
+                // never touched.
+                // scope-dev-allowed: deprecated-Lunaris::forget-routes-here-until-v0.4
+                &lunaris_core::Scope::dev(),
+                AuditEvent::Forget((&receipt).into()),
+            )
+            .await
+            .unwrap_or(0);
             Ok(ForgetReceipt { audit_lsn: Lsn { wall_ms: audit_offset, counter: 0 }, ..receipt })
         }
         .instrument(span)
@@ -633,9 +651,10 @@ pub(crate) async fn forget_scoped(
                 audit_lsn: Lsn { wall_ms: 0, counter: 0 },
                 preview: true,
             };
-            let audit_offset = publish_audit_event(storage, AuditEvent::Forget((&receipt).into()))
-                .await
-                .unwrap_or(0);
+            let audit_offset =
+                publish_audit_event(storage, scope, AuditEvent::Forget((&receipt).into()))
+                    .await
+                    .unwrap_or(0);
             return Ok(ForgetReceipt {
                 audit_lsn: Lsn { wall_ms: audit_offset, counter: 0 },
                 ..receipt
@@ -663,7 +682,9 @@ pub(crate) async fn forget_scoped(
             preview: false,
         };
         let audit_offset =
-            publish_audit_event(storage, AuditEvent::Forget((&receipt).into())).await.unwrap_or(0);
+            publish_audit_event(storage, scope, AuditEvent::Forget((&receipt).into()))
+                .await
+                .unwrap_or(0);
         Ok(ForgetReceipt { audit_lsn: Lsn { wall_ms: audit_offset, counter: 0 }, ..receipt })
     }
     .instrument(span)

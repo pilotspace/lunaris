@@ -242,7 +242,7 @@ pub async fn apply_reflect_invalidate(
         // publish_audit_event logs on failure and returns Ok(0) — never panics.
         // The blanket `Publisher` impl is on `Arc<dyn StoragePort>` so we
         // clone the Arc reference (cheap) rather than dereferencing it.
-        let _ = publish_audit_event(storage, event).await;
+        let _ = publish_audit_event(storage, scope, event).await;
     }
 
     Ok(stamped)
