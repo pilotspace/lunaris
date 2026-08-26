@@ -503,7 +503,7 @@ impl WorkingMemory {
         // T1b fix (260609-dvi): emit BOTH promotion AND archive audit events.
         // Replaces the promotion-only loop with publish_per_event_audits, which
         // matches the background worker's emit behavior (D-22 verbatim).
-        lunaris_consolidate::publish_per_event_audits(&storage, &report).await;
+        lunaris_consolidate::publish_per_event_audits(&storage, &self.scope, &report).await;
 
         Ok(report)
     }
@@ -532,7 +532,7 @@ impl WorkingMemory {
 
         let report = consolidator.consolidate_scoped(storage.clone(), &events, None).await?;
 
-        lunaris_consolidate::publish_per_event_audits(&storage, &report).await;
+        lunaris_consolidate::publish_per_event_audits(&storage, &self.scope, &report).await;
 
         Ok(report)
     }

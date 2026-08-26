@@ -356,7 +356,8 @@ async fn run_scope_task(
                     );
                     // Acquire semaphore before flush to respect the concurrency cap.
                     let _permit = sem.acquire().await.ok();
-                    flush(&storage, consolidator.clone(), &mut buffer, Some(&scope_prefix_str)).await;
+                    flush(&storage, &scope, consolidator.clone(), &mut buffer, Some(&scope_prefix_str))
+                        .await;
                     // Drain remaining in-flight messages.
                     let deadline = Instant::now() + Duration::from_millis(drain_ms);
                     while Instant::now() < deadline {
@@ -374,7 +375,8 @@ async fn run_scope_task(
                         None => {
                             tracing::info!(scope = %scope_str, "consolidate_scope_task_stream_closed; flushing + exiting");
                             let _permit = sem.acquire().await.ok();
-                            flush(&storage, consolidator.clone(), &mut buffer, Some(&scope_prefix_str)).await;
+                            flush(&storage, &scope, consolidator.clone(), &mut buffer, Some(&scope_prefix_str))
+                        .await;
                             // Remove from active map — the scope is no longer subscribed.
                             active.write().remove(&scope);
                             break;
@@ -398,7 +400,8 @@ async fn run_scope_task(
                 _ = tokio::time::sleep_until(next_flush) => {
                     if !buffer.is_empty() {
                         let _permit = sem.acquire().await.ok();
-                        flush(&storage, consolidator.clone(), &mut buffer, Some(&scope_prefix_str)).await;
+                        flush(&storage, &scope, consolidator.clone(), &mut buffer, Some(&scope_prefix_str))
+                        .await;
                     }
                     next_flush = Instant::now() + Duration::from_millis(debounce_ms);
 

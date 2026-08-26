@@ -9,6 +9,7 @@
 //! v0.1.0 wire contract — regenerating them requires the 95%+ review bar
 //! documented in `.planning/phases/13-auditevent-refactor-eval-05-release-gate/13-CONTEXT.md` D3.
 
+use lunaris_core::Scope;
 use lunaris_core::audit::{
     AuditEvent, FactIdData, ForgetReceiptData, ForgetTargetData, IndexKindData, PublishError,
     Publisher, ScopeSpecData, publish_audit_event,
@@ -131,19 +132,20 @@ fn fixture_parity_reflect_invalidation_no_turn_id() {
 /// In-memory publisher used to assert publish_audit_event's serde path is
 /// byte-identical to to_value.
 struct CapturePublisher {
-    inbox: Mutex<Vec<(String, u16, bytes::Bytes)>>,
+    inbox: Mutex<Vec<(String, String, u16, bytes::Bytes)>>,
 }
 
 #[async_trait::async_trait]
 impl Publisher for CapturePublisher {
     async fn publish(
         &self,
+        scope: &Scope,
         topic: &str,
         partition: u16,
         payload: bytes::Bytes,
     ) -> Result<u64, PublishError> {
         let mut inbox = self.inbox.lock();
-        inbox.push((topic.to_string(), partition, payload));
+        inbox.push((scope.as_str().to_string(), topic.to_string(), partition, payload));
         Ok(inbox.len() as u64)
     }
 }
@@ -162,11 +164,14 @@ async fn publish_audit_event_round_trip_all_variants() {
         audit_lsn: Lsn { wall_ms: 1713000000000, counter: 7 },
         preview: false,
     });
-    let off = publish_audit_event(&pub_, forget.clone()).await.unwrap();
+    let scope = Scope::new("helios").unwrap();
+    let off = publish_audit_event(&pub_, &scope, forget.clone()).await.unwrap();
     assert_eq!(off, 1);
 
     let inbox = pub_.inbox.lock();
-    let (topic, partition, payload) = &inbox[0];
+    let (published_scope, topic, partition, payload) = &inbox[0];
+    // W4.6 — the producing scope reaches the broker, not `Scope::dev()`.
+    assert_eq!(published_scope, "helios");
     assert_eq!(topic, "__lunaris_audit__");
     assert_eq!(*partition, 0);
     let decoded: AuditEvent = serde_json::from_slice(payload).unwrap();

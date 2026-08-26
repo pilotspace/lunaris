@@ -53,7 +53,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use futures::stream::{BoxStream, StreamExt};
-use lunaris_core::{LunarisError, QueueMsg, StorageError, StoragePort};
+use lunaris_core::{LunarisError, QueueMsg, Scope, StorageError, StoragePort};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
@@ -115,8 +115,15 @@ pub async fn run_consolidate_worker(
     // RFC 0001 Wave 0: use Scope::dev() until per-scope queue routing (Wave 3F).
     // scope-dev-allowed: inside-deprecated-wrapper — v0.3 supervisor migration
     // tracked in RFC 0001 §3.7 / docs/v0.3-known-debt.md.
+    //
+    // W4.6: the audit publishes below take THIS scope, not a second
+    // independently-minted one. The wrapper's whole queue lives under `dev`;
+    // filing its receipts anywhere else would point them at a partition it
+    // never reads. `ConsolidateSupervisor` — the superseder — carries a real
+    // scope and audits under it.
+    let worker_scope = lunaris_core::Scope::dev();
     let stream = storage
-        .subscribe(&lunaris_core::Scope::dev(), CONSOLIDATE_CONSUMER_GROUP, CONSOLIDATE_TOPIC, 0)
+        .subscribe(&worker_scope, CONSOLIDATE_CONSUMER_GROUP, CONSOLIDATE_TOPIC, 0)
         .await
         .map_err(LunarisError::Storage)?;
 
@@ -153,7 +160,14 @@ pub async fn run_consolidate_worker(
                         scope = ?source_prefix,
                         "consolidate_worker_shutdown_requested; flushing buffer + draining"
                     );
-                    flush(&storage, consolidator.clone(), &mut buffer, source_prefix.as_deref()).await;
+                    flush(
+                        &storage,
+                        &worker_scope,
+                        consolidator.clone(),
+                        &mut buffer,
+                        source_prefix.as_deref(),
+                    )
+                    .await;
                     drain_loop(&mut stream, drain_ms).await;
                     break;
                 }
@@ -161,7 +175,14 @@ pub async fn run_consolidate_worker(
                     match maybe_msg {
                         None => {
                             tracing::info!("consolidate_worker_stream_closed; flushing + exiting");
-                            flush(&storage, consolidator.clone(), &mut buffer, source_prefix.as_deref()).await;
+                            flush(
+                        &storage,
+                        &worker_scope,
+                        consolidator.clone(),
+                        &mut buffer,
+                        source_prefix.as_deref(),
+                    )
+                    .await;
                             break;
                         }
                         Some(Ok(msg)) => {
@@ -176,7 +197,14 @@ pub async fn run_consolidate_worker(
                     }
                 }
                 _ = tokio::time::sleep_until(next_flush) => {
-                    flush(&storage, consolidator.clone(), &mut buffer, source_prefix.as_deref()).await;
+                    flush(
+                        &storage,
+                        &worker_scope,
+                        consolidator.clone(),
+                        &mut buffer,
+                        source_prefix.as_deref(),
+                    )
+                    .await;
                     next_flush = Instant::now() + Duration::from_millis(debounce_ms);
                 }
             }
@@ -228,6 +256,7 @@ fn ingest_into_buffer(buffer: &mut HashMap<Ulid, Vec<ConsolidateEvent>>, payload
 /// `let evts = events.clone(); ... async move { c.consolidate(s, &evts).await }`.
 pub(crate) async fn flush(
     storage: &Arc<dyn StoragePort>,
+    scope: &Scope,
     consolidator: Arc<dyn Consolidator>,
     buffer: &mut HashMap<Ulid, Vec<ConsolidateEvent>>,
     source_prefix: Option<&str>,
@@ -274,10 +303,13 @@ pub(crate) async fn flush(
         let evts = events.clone();
         let c = consolidator.clone();
         let s = storage.clone();
-        let scope: Option<String> = source_prefix.map(|p| p.to_string());
+        // Named `prefix` rather than `scope`: it is the source-string filter
+        // `consolidate_scoped` applies, NOT the partition key. W4.6 gave this
+        // function a real `scope: &Scope` and the two must not shadow.
+        let prefix: Option<String> = source_prefix.map(|p| p.to_string());
         let report =
             match tokio::spawn(
-                async move { c.consolidate_scoped(s, &evts, scope.as_deref()).await },
+                async move { c.consolidate_scoped(s, &evts, prefix.as_deref()).await },
             )
             .await
             {
@@ -292,7 +324,7 @@ pub(crate) async fn flush(
                 }
             };
 
-        publish_per_event_audits(storage, &report).await;
+        publish_per_event_audits(storage, scope, &report).await;
     }
     .instrument(span)
     .await
@@ -307,13 +339,14 @@ pub(crate) async fn flush(
 /// plan's threat model + D-22 audit shape).
 pub async fn publish_per_event_audits(
     storage: &Arc<dyn StoragePort>,
+    scope: &Scope,
     report: &ConsolidationReport,
 ) {
     for p in &report.promotions {
-        let _ = lunaris_core::audit::publish_audit_event(storage, promotion_event(p)).await;
+        let _ = lunaris_core::audit::publish_audit_event(storage, scope, promotion_event(p)).await;
     }
     for a in &report.archives {
-        let _ = lunaris_core::audit::publish_audit_event(storage, archive_event(a)).await;
+        let _ = lunaris_core::audit::publish_audit_event(storage, scope, archive_event(a)).await;
     }
     if report.communities_rebuilt > 0 {
         tracing::info!(
@@ -640,7 +673,8 @@ mod tests {
         buf.entry(helios.episode_id).or_default().push(helios);
         buf.entry(other.episode_id).or_default().push(other);
 
-        flush(&s, c, &mut buf, Some("helios:fs/")).await;
+        let scope = Scope::new("tenant-a").unwrap();
+        flush(&s, &scope, c, &mut buf, Some("helios:fs/")).await;
 
         assert_eq!(
             *rec.seen_scope.lock(),
@@ -786,7 +820,8 @@ mod tests {
             buf.entry(ev.episode_id).or_default().push(ev);
         }
 
-        flush(&s, c, &mut buf, None).await;
+        let scope = Scope::new("tenant-a").unwrap();
+        flush(&s, &scope, c, &mut buf, None).await;
 
         assert_eq!(
             *rec.seen_count.lock(),

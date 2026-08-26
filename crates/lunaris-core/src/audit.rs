@@ -174,10 +174,19 @@ pub enum PublishError {
 /// Narrow publish surface. Decouples [`publish_audit_event`] from
 /// [`StoragePort`] so tests can substitute an in-memory capture without
 /// implementing the full `StoragePort` trait.
+///
+/// W4.6: `publish` carries the producing `scope`. It did not until 0.7.0, and
+/// the omission was not cosmetic — Moon namespaces MQ topics per scope
+/// (`lunaris:{scope}:{topic}`), so every audit event in the workspace landed
+/// on `Scope::dev()`'s topic regardless of who produced it. A tenant reading
+/// their own audit stream — the only stream they are entitled to read — saw
+/// nothing for operations that definitely happened, and every tenant's
+/// receipts piled into one shared partition.
 #[async_trait]
 pub trait Publisher: Send + Sync {
     async fn publish(
         &self,
+        scope: &Scope,
         topic: &str,
         partition: u16,
         payload: Bytes,
@@ -188,18 +197,12 @@ pub trait Publisher: Send + Sync {
 impl Publisher for Arc<dyn StoragePort> {
     async fn publish(
         &self,
+        scope: &Scope,
         topic: &str,
         partition: u16,
         payload: Bytes,
     ) -> Result<u64, PublishError> {
-        // RFC 0001 Wave 0: audit publishes use Scope::dev() as migration crutch.
-        // Wave 1E will thread the real scope through the audit path — that
-        // requires extending the `Publisher` trait surface (`publish` gains
-        // a `scope` parameter) plus updating every `publish_audit_event`
-        // call site to forward the scope from its `Lunaris{,Scoped}` handle.
-        // scope-dev-allowed: audit-publish-trait-surface — Publisher::publish
-        // is scope-less; tracked in docs/v0.3-known-debt.md as Wave 1E.
-        StoragePort::publish(self.as_ref(), &Scope::dev(), topic, partition, payload)
+        StoragePort::publish(self.as_ref(), scope, topic, partition, payload)
             .await
             .map_err(|e: StorageError| PublishError::Backend(e.to_string()))
     }
@@ -224,6 +227,7 @@ impl Publisher for Arc<dyn StoragePort> {
 /// The `PublishError` variant is reserved for future strict-mode callers.
 pub async fn publish_audit_event<P: Publisher + ?Sized>(
     publisher: &P,
+    scope: &Scope,
     event: AuditEvent,
 ) -> Result<u64, PublishError> {
     let payload = match serde_json::to_vec(&event) {
@@ -233,7 +237,7 @@ pub async fn publish_audit_event<P: Publisher + ?Sized>(
             return Ok(0);
         }
     };
-    match publisher.publish(AUDIT_TOPIC, 0, payload.into()).await {
+    match publisher.publish(scope, AUDIT_TOPIC, 0, payload.into()).await {
         Ok(offset) => Ok(offset),
         Err(e) => {
             tracing::warn!(
@@ -252,7 +256,7 @@ mod tests {
 
     /// In-memory test publisher that captures every payload.
     struct CapturePublisher {
-        pub inbox: Mutex<Vec<(String, u16, Bytes)>>,
+        pub inbox: Mutex<Vec<(String, String, u16, Bytes)>>,
     }
     impl CapturePublisher {
         fn new() -> Self {
@@ -263,12 +267,13 @@ mod tests {
     impl Publisher for CapturePublisher {
         async fn publish(
             &self,
+            scope: &Scope,
             topic: &str,
             partition: u16,
             payload: Bytes,
         ) -> Result<u64, PublishError> {
             let mut box_ = self.inbox.lock();
-            box_.push((topic.to_string(), partition, payload));
+            box_.push((scope.as_str().to_string(), topic.to_string(), partition, payload));
             Ok(box_.len() as u64)
         }
     }
@@ -284,11 +289,18 @@ mod tests {
             audit_lsn: Lsn { wall_ms: 1, counter: 0 },
             preview: false,
         });
-        let off = publish_audit_event(&pub_, event.clone()).await.unwrap();
+        let scope = Scope::new("tenant-a").unwrap();
+        let off = publish_audit_event(&pub_, &scope, event.clone()).await.unwrap();
         assert_eq!(off, 1);
         let inbox = pub_.inbox.lock();
-        assert_eq!(inbox[0].0, AUDIT_TOPIC);
-        let decoded: AuditEvent = serde_json::from_slice(&inbox[0].2).unwrap();
+        // W4.6: the scope the caller supplied reaches the publisher verbatim.
+        // It used to be dropped on the floor here and replaced with
+        // `Scope::dev()` inside the `Arc<dyn StoragePort>` impl, which on a
+        // scope-namespaced broker filed every tenant's receipts in one shared
+        // partition and left each tenant's own audit stream empty.
+        assert_eq!(inbox[0].0, "tenant-a");
+        assert_eq!(inbox[0].1, AUDIT_TOPIC);
+        let decoded: AuditEvent = serde_json::from_slice(&inbox[0].3).unwrap();
         assert_eq!(decoded, event);
     }
 

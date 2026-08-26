@@ -38,23 +38,33 @@ pub const AUDIT_TOPIC: &str = "__lunaris_audit__";
 That is a real foundation. It is also, as it stands, **not an audit trail**.
 Three defects, each verified in source:
 
-### G1 — every tenant's audit events land in ONE scope
+### G1 — every tenant's audit events land in ONE scope — **CLOSED (W4.6, 0.7.0)**
 
-`impl Publisher for Arc<dyn StoragePort>` publishes under `Scope::dev()`:
+`impl Publisher for Arc<dyn StoragePort>` published under `Scope::dev()`:
 
 ```rust
 // RFC 0001 Wave 0: audit publishes use Scope::dev() as migration crutch.
 StoragePort::publish(self.as_ref(), &Scope::dev(), topic, partition, payload)
 ```
 
-It is honestly labelled (`scope-dev-allowed: audit-publish-trait-surface`,
+It was honestly labelled (`scope-dev-allowed: audit-publish-trait-surface`,
 tracked as Wave 1E), and as *retrieval* debt it was tolerable. As the substrate
-for a **governance** feature it is disqualifying: a governance read API over a
+for a **governance** feature it was disqualifying: a governance read API over a
 dev-scoped stream serves one tenant another tenant's history. CLAUDE.md already
 names `Scope::dev()` a migration crutch and says any new production call site is
 a carry-over, not a steady state.
 
-This is the reason D6 cannot be built directly on top of what is there.
+`Publisher::publish` now takes `&Scope` and all six production
+`publish_audit_event` call sites forward the scope they already hold.
+`crates/lunaris/tests/audit_scope_isolation.rs` drives
+`ScopedLunaris::forget` under a real scope and reads the receipt back off that
+scope's own audit topic.
+
+One correction to the diagnosis above, found while fixing it: the marker said
+the debt was "tracked in docs/v0.3-known-debt.md as Wave 1E". That file has a
+Wave 1E note, but for a different item — `Lunaris::recall`'s queue-depth health
+check. The audit-publish debt had no entry anywhere. A marker that names a
+tracking location is only as good as the entry it names.
 
 ### G2 — nothing reads the events back
 

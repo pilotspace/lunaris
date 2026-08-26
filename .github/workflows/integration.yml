@@ -421,6 +421,7 @@ jobs:
             --test phase_14_1_reflect_invalidate \
             --test as_of_scratchpad_read \
             --test as_of_scratchpad_content \
+            --test audit_scope_isolation \
             --no-fail-fast \
             -- --include-ignored
 

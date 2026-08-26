@@ -45,6 +45,34 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
 
 ### Changed
 
+- **Audit events are published under the scope that produced them (W4.6,
+  D6.1).** **Breaking, source-level:** `lunaris_core::audit::Publisher::publish`
+  and `publish_audit_event` both take a `&Scope` as their new first/second
+  argument. Callers outside this workspace that implement `Publisher` or call
+  `publish_audit_event` need one added parameter; there is no wire-format
+  change and no data migration.
+
+  The old signature had no scope, so the blanket `impl Publisher for Arc<dyn
+  StoragePort>` supplied `Scope::dev()`. Moon namespaces MQ topics per scope
+  (`lunaris:{scope}:__lunaris_audit__`), so **every** audit event in the
+  system — forget receipts, consolidator promotions and archives, verifier
+  arbitrations, reflect invalidations — was filed against the `dev` partition
+  no matter which tenant produced it. Two consequences: a tenant reading their
+  own audit stream, the only stream they are entitled to read, saw nothing for
+  operations that definitely happened; and whoever could read `dev` could read
+  everybody's receipts.
+
+  All six production call sites now forward the scope they already held. The
+  two exceptions are deliberate and marked: `Lunaris::forget` (the deprecated
+  unscoped entry point) and `run_consolidate_worker` (the deprecated
+  single-topic wrapper) both audit under the same `Scope::dev()` their reads
+  and writes already use — auditing anywhere else would file a receipt against
+  a partition the operation never touched. Their superseders,
+  `ScopedLunaris::forget` and `ConsolidateSupervisor`, carry real scopes.
+
+  This is the hard prerequisite for the D6 governance work: a read API over a
+  dev-scoped stream would have served one tenant another tenant's history.
+
 - **Recall ranking on the MCP / hook / CLI path shifts toward previously-used
   memories (F43).** The ACT-R activation prior was **inert**: `boost_prior`
   clamped negative activation to zero, and because activation is
