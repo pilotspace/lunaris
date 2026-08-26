@@ -57,7 +57,7 @@ must_fail retrieve-aggr  cargo test -p lunaris-retrieve --test d_aggregate_opera
 for t in moon_parity coding_session_memory_smoke consolidator_scope_isolation \
          phase_14_1_reflect_invalidate chaos_helios_sigkill \
          as_of_scratchpad_read as_of_scratchpad_content \
-         audit_scope_isolation; do
+         audit_scope_isolation retention_policy; do
   must_fail "memory-$t" cargo test -p lunaris-memory --test "$t" --no-fail-fast -- --include-ignored
 done
 

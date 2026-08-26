@@ -58,6 +58,7 @@ pub mod recall;
 // (`LUNARIS_RECALL_RERANK`, read once at handle construction).
 pub mod recall_rerank;
 pub mod recipes;
+pub mod retention;
 // `memory-update-intelligence` — pure cross-episode reconciliation decision
 // core (dedup NOOP / additive Append / cross-episode Supersede). Consumed by
 // `structured_ingest` to converge memories without copying Mem0's

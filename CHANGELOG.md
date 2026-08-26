@@ -7,6 +7,28 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
 
 ### Added
 
+- **Per-scope retention (W4.6, D6.4).** `ScopedLunaris::set_retention_policy` /
+  `retention_policy` / `enforce_retention` (and `enforce_retention_at` for a
+  caller-pinned cutoff). A policy is `{ max_age_ms, hard }`; rows whose
+  valid-time start is older than `now - max_age_ms` are eligible.
+
+  Retention is **opt-in per scope** — a scope with no policy is never swept.
+  The failure mode of an accidentally-applied policy is unrecoverable data
+  loss; the failure mode of an accidentally-absent one is disk. A policy that
+  does not parse is an error rather than `None`, because `None` means "keep
+  everything" and a typo'd field would otherwise disable retention silently.
+
+  A sweep is an ordinary scoped `ForgetTarget::Before`, not a direct delete, so
+  it inherits `forget`'s soft/hard semantics, its chunk sweep, its
+  single-`atomic_write` invariant, and its audit receipt. A hard sweep still
+  goes through the D-21 confirmation rail — it runs the preview and derives its
+  token from that receipt, exactly as a human hard-forget must. The policy is
+  the standing authorization, not a bypass.
+
+  Lunaris does **not** schedule sweeps. A library the host embeds does not get
+  to start a background thread that deletes data on a timer; the surfaces can
+  expose `enforce_retention` and the scheduling belongs to the deployment.
+
 - **The audit trail can be read back (W4.6, D6.3 — G2).**
   `ScopedLunaris::audit_events(from_ms, to_ms, limit)` returns an `AuditPage`
   of decoded `AuditEvent`s from the bound scope's own trail. Before it, a
@@ -76,6 +98,21 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
   Historical `as_of` pins are unaffected: more than an hour back they are still
   refused with `StorageError::NotSupported` on a backend with no KV version
   chain, which is the same guard the old path hit.
+
+### Fixed
+
+- **A repeated soft `forget` re-stamped rows it had already tombstoned
+  (W4.6).** `scan_matches_scoped` filtered on the target predicate alone, with
+  no check for rows already sys-closed, so every pass re-wrote every row it had
+  ever matched and reported them again in `matched` / `rows_written`.
+
+  As a one-shot `forget` that was the cosmetic "`matched` over-count on
+  soft-deleted records" recorded as an open follow-up. Retention is what makes
+  it matter: a policy sweep runs on a schedule, so a scope with a policy grew
+  its write volume without bound while reporting work that changed nothing.
+  The scan now drops already-closed rows on the SOFT path only — a hard forget
+  must still be able to delete a tombstoned row, because "already hidden" is
+  not "already gone".
 
 ### Changed
 

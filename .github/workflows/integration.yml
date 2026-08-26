@@ -422,6 +422,7 @@ jobs:
             --test as_of_scratchpad_read \
             --test as_of_scratchpad_content \
             --test audit_scope_isolation \
+            --test retention_policy \
             --no-fail-fast \
             -- --include-ignored
 

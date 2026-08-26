@@ -24,6 +24,7 @@ pub mod json_repair;
 pub mod keyspace;
 pub mod primitives;
 // RFC 0001 — Scope newtype + ScopeError for multi-agent partition isolation.
+pub mod retention;
 pub mod scope;
 pub mod snippet;
 // Phase 23-01 — Scope derivation shared between lunaris-mcp and lunaris-hook.
