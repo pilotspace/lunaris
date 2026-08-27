@@ -9,9 +9,16 @@
 # Why it needed a workflow at all: through v0.7.1 `integrations/README.md`
 # opened with `pip install "lunaris-integrations[langgraph]"`, and the name has
 # never existed on PyPI. Nothing in this repo built the package, let alone
-# uploaded it. `scripts/tests/test_install_claims_are_publishable.py` now fails
-# if any doc names a distribution no workflow publishes, so the README and this
-# file cannot drift apart again.
+# uploaded it. `scripts/tests/test_published_distributions.py` now fails if any
+# doc names a distribution no workflow publishes, so the README and this file
+# cannot drift apart again. (This comment named
+# `test_install_claims_are_publishable.py`, which does not exist in this repo
+# under that name — the guard is real, the citation was stale.)
+#
+# Note what that guard does NOT check: it asks whether SOME workflow publishes
+# the distribution, not whether a publish ever succeeded. `lunaris-integrations`
+# satisfies it today while the name still 404s on PyPI, because this file
+# exists. Only the first green run below makes the docs true.
 #
 # FIRST RUN IS OWNER-GATED. `secrets.MATURIN_PYPI_TOKEN` is the token
 # python-prebuild.yml already uses for the `lunaris` project. If that token is
