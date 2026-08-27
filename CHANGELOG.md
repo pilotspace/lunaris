@@ -53,6 +53,33 @@ resolve. Use the adapters from a source checkout of `integrations/`.
 
 ### Added
 
+- **Retention is reachable from an agent (Wave 6, R1).** `memory.retention`
+  reads or sets a scope's policy — no arguments reads it, `max_age_ms` sets
+  one, and a scope with no policy never expires anything. `memory.retention_enforce`
+  runs one pass. Sweeps are deliberately **not** automatic: configuring a
+  policy and performing a deletion are separate calls, so no single tool call
+  can both widen the eligible set and act on it.
+
+  `retention_enforce` defaults to `dry_run: true`, the same ruling as
+  `memory.forget` — an LLM-driven surface does not delete by default. The
+  preview shares the engine's single cutoff computation, so it cannot report a
+  different eligible set than the commit would take. `hard=true` is
+  unrecoverable; the default soft mode hides memories from recall and keeps
+  them restorable.
+
+  **This brings the MCP roster to 20 tools** — the shipped number.
+  `crates/lunaris-mcp/tests/server_boot.rs` asserts it by spawning the real
+  binary and enumerating a live `tools/list` over stdio, so a tool that fails
+  rmcp's schema validation at router-build time cannot slip through.
+
+  That guard covers the server. It does not cover this file:
+  `scripts/tests/test_mcp_tool_count_matches_the_server.py` holds every *doc*
+  to the count `main.rs` registers, and deliberately exempts `CHANGELOG.md`,
+  because a changelog records what was true when each entry was written. So
+  treat 20 as the count for 0.8.0 and the per-tool numbers in older entries as
+  the roster size on the day that tool landed — not a running total, and not
+  something a guard will correct if it goes stale.
+
 - **`memory.profile` — the human-readable memory artifact (W4.2).** Renders a
   scope's captured knowledge as a markdown page, grouped by kind and newest
   first, ordered most-durable-first (constraints, preferences, decisions,
@@ -64,7 +91,7 @@ resolve. Use the adapters from a source checkout of `integrations/`.
   would otherwise render a page that looks busy and says nothing. An empty
   scope renders an explicit "nothing captured yet" page naming
   `memory.remember`, because a blank page and "nothing was ever curated here"
-  are the same bytes and opposite meanings. The MCP roster is now 18 tools.
+  are the same bytes and opposite meanings.
 
 - **`memory.remember` — the direct-capture write path (W4.3b).** One tool,
   four kinds: `decision` (a choice and its rationale), `fix` (what broke and
@@ -75,7 +102,7 @@ resolve. Use the adapters from a source checkout of `integrations/`.
   stored as readable prose (`content`, then `Why: …`) rather than a JSON
   envelope, so a memory reads correctly with no renderer in front of it.
   Filed under `source = "{kind}:{scope}"`, so `filters.source_prefix="fix:"`
-  retrieves only fixes. The MCP roster is now 17 tools.
+  retrieves only fixes.
 - `scripts/tests/test_mcp_tool_count_matches_the_server.py` — two checks, both
   derived from the `#[tool(name = …)]` declarations rmcp builds the router
   from: every stated tool count matches the server, and every page that
