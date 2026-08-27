@@ -7,6 +7,27 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
 
 ## [0.8.0] — 2026-08-27
 
+### Upgrade notes — 0.7.1 → 0.8.0
+
+There is no wire-format change, no data migration, and no schema version to
+bump. Rolling 0.8.0 back to the 0.7.1 binary on the same Moon store is
+supported in place; the drill recorded in `docs/RELEASE.md` §7 covers the
+0.6.2 ↔ 0.7.0 hop, which crossed a storage backend — this one does not.
+
+One thing does move, and an operator should know where it went. Audit events
+are now published under the producing scope's MQ topic
+(`lunaris:{scope}:__lunaris_audit__`) instead of `lunaris:dev:__lunaris_audit__`.
+Pre-0.8.0 events are **not** lost and **not** migrated: they stay in the `dev`
+topic, where every tenant's receipts were commingled. Nothing could read them
+before — `audit_events` is new in this release — so the practical effect is
+that `ScopedLunaris::audit_events` shows history starting at your upgrade, not
+an empty trail meaning "nothing happened". To reach the older events, read the
+`dev` scope directly, and treat what you find as cross-tenant.
+
+Roll back and the reverse holds: 0.8.0-era events remain in their per-scope
+topics and the 0.7.1 binary will not surface them, because 0.7.1 has no audit
+reader at all. Nothing is destroyed in either direction.
+
 ### What this release does *not* claim
 
 `memory.remember` and `memory.profile` make direct capture *possible*. They do
