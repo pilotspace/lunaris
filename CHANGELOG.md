@@ -5,6 +5,31 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-08-27
+
+### What this release does *not* claim
+
+`memory.remember` and `memory.profile` make direct capture *possible*. They do
+not make it *happen*. Nothing in Lunaris, its hooks, or its MCP server calls
+`memory.remember` on an agent's behalf — that wiring (an agent-facing skill
+that decides *when* something is worth remembering) is scoped to the next
+milestone, not this one.
+
+Measured on the production store on 2026-08-27, across 303,874 episodes:
+**zero real curated memories**. The five non-`lunaris:tool_call:*` sources
+found are test fixtures. If you install 0.8.0 and query your own store today
+you will find raw tool-call history, not a curated memory — that is expected,
+and it is the honest state of this release. `memory.profile` exists in part to
+make that visible rather than paper over it: an empty scope renders a page
+that says "nothing captured yet" and names `memory.remember`, rather than a
+blank page that could be mistaken for "nothing to see".
+
+`lunaris-integrations` is **not on PyPI**. Its publish workflow exists but its
+first run is owner-gated on a PyPI token scoped to the `lunaris` project;
+until that is widened, `pip install lunaris-integrations[langgraph]` does not
+resolve. Use the adapters from a source checkout of `integrations/`.
+
+
 ### Added
 
 - **`memory.profile` — the human-readable memory artifact (W4.2).** Renders a
