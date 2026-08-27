@@ -27,15 +27,31 @@ The audience is internal agent platforms first (we own the substrate), with a pu
 >   pinned by `crates/lunaris-conformance/tests/run_as_of_moon_gap.rs`.
 >   Never sell time-travel without that sentence attached.
 
+### What ships vs. what happens (read before claiming a capability)
+
+**0.8.0 ships the capture *capability*; nothing invokes it.** `memory.remember`
+(kinds: decision / fix / preference / constraint) and `memory.profile` exist and
+work — verified end-to-end against the published binary. But no hook, skill or
+MCP path calls `memory.remember` on an agent's behalf. Measured on the
+production store 2026-08-27, across **303,874 episodes: zero curated
+memories**; the only non-`lunaris:tool_call:*` sources are test fixtures.
+
+So a store queried today returns raw tool-call history, not curated memory.
+`CHANGELOG.md`'s 0.8.0 entry opens by saying so. When describing Lunaris, the
+line that stays honest is **"0.8.0 ships the capability, 0.9.0 ships the
+behaviour"** — the agent-facing skill that decides *when* something is worth
+remembering is the next milestone. Do not describe the capability as the
+behaviour, and do not cite a curated-memory count without measuring it.
+
 ### Constraints
 
 - **Tech stack — Rust**: edition 2024, MSRV **1.94** (matches Moon to ease cross-repo work)
 - **Tech stack — Python**: 3.11+ (PyO3 0.29 baseline)
 - **Tech stack — TypeScript**: Node 20+, napi-rs 3.x
 - **Backend — Moon only (0.7.0+)**: the original "Moon first, Postgres second" ordering inverted blueprint §5.3 for internal-first deployment; 0.7.0 finished the job and deleted the Postgres and SQLite backends outright. `moon://host:port` is the only scheme `lunaris::open` accepts
-- **Latest libraries policy**: tokio latest 1.x, axum ≥0.8, sqlx ≥0.9, llama-cpp-2 (exact-pinned), tower ≥0.5, tracing ≥0.1, thiserror 2.x, anyhow 1.x, serde latest 1.x, redis 0.32+ (or direct Moon SDK if available in `moon/sdk/`)
+- **Latest libraries policy**: tokio latest 1.x, axum ≥0.8, llama-cpp-2 (exact-pinned), tower ≥0.5, tracing ≥0.1, thiserror 2.x, anyhow 1.x, serde latest 1.x, redis 0.32+ / `moondb` (path dep at `vendor/moon/sdk/rust`). **`sqlx` is no longer a dependency** — it left with the Postgres backend in 0.7.0; this line listed `sqlx ≥0.9` until 0.8.0.
 - **No duplicate vector / BM25 libs**: Moon native `FT.*` is the canonical implementation; Lunaris does NOT bundle a second HNSW (e.g., `instant-distance`) or BM25 (e.g., `tantivy`)
-- **Timeline — 7 calendar days to production rollout**: explicit user override of blueprint §14 (90-day plan). The team takes the risk of compressed validation; mitigated by progressive rollout (5% → 25% → 100% traffic at lunaris.dev).
+- **Shipping cadence**: **0.8.0 shipped 2026-08-27** to crates.io, npm and PyPI (install-verified on all three). The original "7 calendar days to production rollout" override of blueprint §14 is spent and is kept only as history; releases now go through `docs/RELEASE.md` — `scripts/release-preflight.sh` must be 10/10 on the tagged commit, main CI green **before** the tag (`ci.yml` has no tag trigger), and a rollback rehearsal (`scripts/release/moon-inplace-rollback-drill.sh` for Moon-to-Moon hops).
   **The "automated quality gates on every push (LongMemEval, LoCoMo, ER-F1,
   perf smoke)" clause was retracted 2026-08-21 — none of it is true.** No
   eval gate runs on push: `eval-gauntlet.yml` was deleted from main and, before
@@ -143,13 +159,26 @@ The audience is internal agent platforms first (we own the substrate), with a pu
   `ingest_04_single_atomic_write` step, which strips line comments before
   counting:
   `grep -v '^\s*//' crates/lunaris-ingest/src/pipeline.rs | grep -c 'storage\.atomic_write'`
-  must return exactly `1`. That call site is `pipeline.rs:438`, pinned by
+  must return exactly `1`, pinned by
   `crates/lunaris-ingest/tests/ingest_pipeline.rs::single_atomic_write_call`.
-  A bare `grep -c 'atomic_write'` is NOT the invariant — it returns 10 because
-  it counts doc comments. Three ingest paths each carry exactly one write:
-  `lunaris-ingest/src/pipeline.rs:438`, `lunaris/src/ingest.rs:624` (graph-ON
-  fan-out), `lunaris/src/structured_ingest.rs:535` (agent-supplied graph) — so
-  the rule is one write PER PATH, not one workspace-wide. Any new ingest
+  A bare `grep -c 'atomic_write'` is NOT the invariant — it counts doc
+  comments (`pipeline.rs` has three before the real call).
+
+  Three ingest paths each carry exactly one write — `lunaris-ingest/src/pipeline.rs`,
+  `lunaris/src/ingest.rs` (graph-ON fan-out), `lunaris/src/structured_ingest.rs`
+  (agent-supplied graph) — so the rule is one write PER PATH, not one
+  workspace-wide. **Locate them, do not cite line numbers:**
+
+  ```bash
+  grep -n 'storage\.atomic_write' crates/lunaris-ingest/src/pipeline.rs \
+    crates/lunaris/src/ingest.rs crates/lunaris/src/structured_ingest.rs \
+    | grep -v ':[[:space:]]*//'
+  ```
+
+  This block used to pin `438` / `624` / `535`. By 0.8.0 all three had drifted
+  to `486` / `868` / `580` while the invariant itself stayed green — a stale
+  line number sends a reader to unrelated code and reads like a broken
+  invariant. Line numbers in this file are a liability; prefer a locator. Any new ingest
   fan-out MUST extend that path's single `WriteOp` vector, never add a second
   `atomic_write`.
 - **Lock-across-await — never.** Snapshot under `read()`/`write()`, drop the
@@ -168,9 +197,13 @@ The audience is internal agent platforms first (we own the substrate), with a pu
   router, so they CANNOT catch this — the guard is
   `crates/lunaris-mcp/tests/server_boot.rs::server_boots_and_lists_all_tools`,
   which spawns the real binary, drives `initialize` → `tools/list`, and
-  asserts every tool in its `EXPECTED_TOOLS` roster registers (16 as of
-  0.7.0 — trust the constant, not this count). New MCP tools MUST keep that
-  roster green.
+  asserts every tool in its `EXPECTED_TOOLS` roster registers. **Trust the
+  constant, not any count written in prose** — this line said 16 through
+  0.7.0 and the roster is 20 in 0.8.0 (`memory.retention` and
+  `memory.retention_enforce` were the last two). Verified against the
+  *published* 0.8.0 binary on 2026-08-27 by driving `initialize` →
+  `tools/list` over stdio, not by reading the source. New MCP tools MUST keep
+  that roster green.
 - **embedded-moon — opt-in, never in `default`.** `lunaris-mcp`'s
   `embedded-moon` feature (`crates/lunaris-mcp/Cargo.toml`) pulls in the Moon
   server crate to auto-launch an in-process Moon when no `LUNARIS_MCP_STORAGE`
