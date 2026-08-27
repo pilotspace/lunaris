@@ -33,7 +33,7 @@ use lunaris_core::{Hlc, LunarisError, Scope, StoragePort, WriteOp};
 
 use crate::forget::{ForgetReceipt, ForgetTarget};
 
-/// What one [`enforce`] pass did.
+/// What one [`enforce_at`] pass did.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct RetentionReceipt {
@@ -114,7 +114,7 @@ pub async fn enforce_at(
 /// default. Without this, a caller wanting a dry run had to recompute
 /// `now - max_age_ms` itself — a second definition of the cutoff, and this
 /// module exists because two definitions of a delete drift apart. The preview
-/// therefore shares one cutoff computation with the commit, in [`run`].
+/// therefore shares one cutoff computation with the commit, in `run`.
 ///
 /// A preview of a `hard` policy is still a preview: it takes the `dry_run`
 /// branch and never mints a confirmation token, so previewing cannot be a

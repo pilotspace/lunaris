@@ -1354,7 +1354,7 @@ impl<'a> ScopedLunaris<'a> {
     ///
     /// `from_ms` / `to_ms` are inclusive wall-clock milliseconds, `None`
     /// unbounded. Records come back oldest-first, capped at `limit`. Entries
-    /// that fail to decode are counted in [`AuditPage::undecodable`] rather
+    /// that fail to decode are counted in [`lunaris_core::audit::AuditPage::undecodable`] rather
     /// than silently skipped.
     ///
     /// Returns `StorageError::NotSupported` on a backend with no range read.
@@ -2180,7 +2180,7 @@ impl std::fmt::Display for EmbedderBackend {
 static RESOLVED_EMBEDDER_BACKEND: OnceLock<EmbedderBackend> = OnceLock::new();
 static DEGRADATION_ANNOUNCED: OnceLock<()> = OnceLock::new();
 
-/// Environment override that silences [`announce_degradation_once`].
+/// Environment override that silences `announce_degradation_once`.
 pub const SUPPRESS_DEGRADED_WARNING_ENV: &str = "LUNARIS_SUPPRESS_DEGRADED_WARNING";
 
 /// What [`Lunaris::open`] should do about the backend it just resolved.

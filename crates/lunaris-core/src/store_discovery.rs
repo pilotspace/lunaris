@@ -13,7 +13,7 @@
 //! `lunaris-hook` and `lunaris-mcp` deliberately do NOT depend on each other,
 //! and `lunaris-core::scope_resolver` is already the shared home for the other
 //! half of this bootstrap (both binaries derive identical scopes through it).
-//! The error this discovery declines into — [`ScopeResolveError::NoStoreUrl`] —
+//! The error this discovery declines into — [`crate::scope_resolver::ScopeResolveError::NoStoreUrl`] —
 //! is defined there too. This module is `std`-only: no new dependency, and no
 //! engine/transport crate is dragged into a decision made before either exists.
 //!

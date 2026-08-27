@@ -183,15 +183,30 @@ fn release_preflight_hygiene_list_holds_only_publishable_crates() {
     assert!(!listed.is_empty(), "could not parse HYGIENE_CRATES out of release-preflight.sh");
 
     let meta = workspace_metadata();
-    let offenders: Vec<&String> = listed
-        .iter()
-        .filter(|dir| meta.packages.iter().any(|p| &p.dir_name() == *dir && !p.is_publishable()))
-        .collect();
+
+    // SET EQUALITY, not a one-directional filter. The previous assertion only
+    // flagged a listed crate that EXISTS and is `publish = false`; a listed
+    // crate that had been DELETED matched no package, so `.any(..)` was false
+    // and it sailed through — which is exactly how `lunaris-storage-postgres`
+    // and `lunaris-storage-embedded` stayed in this list for the whole 0.7.x
+    // line, failing every preflight run on a `No such file or directory` while
+    // this guard reported green. A publishable crate MISSING from the list was
+    // invisible too. Comparing the two sets closes all three directions at once.
+    let mut expected: Vec<String> =
+        meta.packages.iter().filter(|p| p.is_publishable()).map(|p| p.dir_name()).collect();
+    expected.sort();
+    let mut actual: Vec<String> = listed.iter().map(|d| (*d).clone()).collect();
+    actual.sort();
+
+    let stale: Vec<&String> = actual.iter().filter(|d| !expected.contains(d)).collect();
+    let unlisted: Vec<&String> = expected.iter().filter(|d| !actual.contains(d)).collect();
 
     assert!(
-        offenders.is_empty(),
-        "release-preflight.sh HYGIENE_CRATES holds `publish = false` crate dir(s): {offenders:?}\n\
-         The preflight must not certify a crate that cannot be uploaded."
+        stale.is_empty() && unlisted.is_empty(),
+        "release-preflight.sh HYGIENE_CRATES has drifted from the workspace.\n\
+         listed but not a publishable crate (deleted, renamed, or `publish = false`): {stale:?}\n\
+         publishable but absent from the list (would ship uncertified): {unlisted:?}\n\
+         The list must equal the set of publishable crate directories."
     );
 }
 
