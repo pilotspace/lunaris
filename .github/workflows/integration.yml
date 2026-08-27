@@ -355,6 +355,37 @@ jobs:
         # standing, which is exactly what `keyword_bm25` was passing on.
         run: bash scripts/ci/reset_moon.sh
 
+      - name: Run lunaris-retrieve tests (live Moon)
+        # R5 (2026-08-27) — `grep 'p lunaris-retrieve' .github/workflows/*.yml`
+        # returned NOTHING before this step: no workflow had ever run this
+        # crate. That is not a cosmetic gap. `navigate_filter_moon.rs` is the
+        # ONLY guard on `Navigate`, a `pub use`-exported operator that sits on
+        # the production recall root (`composition.rs::facts_leg`, graph ON)
+        # and is documented in the book. It had been failing on every live Moon
+        # since it was written, and nothing noticed, because the one job with a
+        # Moon never included the package.
+        #
+        # The whole package runs, not just the one file: `d_aggregate_operator`
+        # is likewise live-gated (it is already listed in
+        # assert-strict-fires.sh, which compiled it and proved it skips loudly —
+        # while no job ever ran it WITH a fixture), and the ~30 remaining files
+        # are in-process and cost seconds.
+        #
+        # No `--features moon-it`: `lunaris-retrieve` has no such feature
+        # (`[features] default = []`). Its live files gate on bare `MOON_URL`,
+        # which this job's env sets alongside `LUNARIS_MOON_URL`.
+        if: success() || failure()
+        run: |
+          cargo test -p lunaris-retrieve \
+            --no-fail-fast
+
+      - name: Reset Moon (fresh data dir)
+        # F28: without this the next suite runs against whatever the previous
+        # one left behind, and can report success for something it never
+        # established. FLUSHALL is NOT sufficient — it leaves FT indices
+        # standing, which is exactly what `keyword_bm25` was passing on.
+        run: bash scripts/ci/reset_moon.sh
+
       - name: Run lunaris-server live graph-mode test
         # F16 — this job is the only one with a Moon, and `-p lunaris-server`
         # was never in its scope. `recall_graph_mode_live.rs` needs a real

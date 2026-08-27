@@ -126,9 +126,49 @@ fn ctx_with_filter(moon: Arc<MoonStorage>, scope: Scope, filter: Option<Filter>)
     QueryContext::new(query, scope, embedder, storage, keyword)
 }
 
+/// Vector-mid filler entities, near enough to outrank `beta` on pure KNN but
+/// far enough that a hop-1 node still beats them on `__final_score`.
+///
+/// R5 (2026-08-27) — WHY THIS EXISTS. Without padding, this fixture wrote
+/// exactly two documents into `entities` and then asked for `k = 2`, so the
+/// KNN leg returned BOTH of them as seeds. Moon's `expand_results_via_graph`
+/// deliberately excludes seeds from the expansion set, and
+/// `build_navigate_response` keeps the hop-0 row on dedup — so `beta` came
+/// back at `__hop_depth = 0`, and `Navigate`'s documented `hop_depth >= 1`
+/// filter (operators/navigate.rs — hop-0 rows are SEEDS, never payload)
+/// dropped it. The discriminator was therefore asserting the exact opposite
+/// of the operator's contract, and could never pass on any live Moon. The
+/// feature was fine; the fixture was degenerate.
+///
+/// Padding the seed index so `beta` falls OUT of the KNN top-k restores the
+/// scenario the test was written for: `beta` becomes reachable only by BFS,
+/// which is the leak path the filtered assertion below has to close.
+///
+/// Score arithmetic (Moon FT.NAVIGATE, default `HOP_PENALTY` 0.1, measured
+/// live against Moon 0.8.5): alpha ≈ 0.0001, fillers ≈ 0.28–0.36, beta as a
+/// hop-1 expansion = `hops * hop_penalty` = 0.1. Sorting ascending and
+/// taking `k = 2` yields {alpha, beta} — the fillers are deliberately worse
+/// than 0.1 so they anchor KNN without stealing the final slots.
+const FILLER_COUNT: u8 = 3;
+
+fn filler_ops() -> Vec<WriteOp> {
+    (0..FILLER_COUNT)
+        .flat_map(|i| {
+            let marker = 0x10 + i;
+            let name = format!("fill{i}");
+            vec![
+                node(eid(marker), &name),
+                vector(eid(marker), &name, emb(1.0, 0.6 + 0.05 * f32::from(i))),
+            ]
+        })
+        .collect()
+}
+
 /// §2 scenario 3 — filtered Navigate on live Moon never leaks a foreign hit.
 ///
-/// Fixture: alpha (near the query) --KNOWS--> beta (vector-far, graph-linked).
+/// Fixture: alpha (near the query) --KNOWS--> beta (vector-far, graph-linked),
+/// plus [`FILLER_COUNT`] vector-mid entities that keep `beta` out of the KNN
+/// top-k so it is reachable ONLY through the graph hop.
 /// Discriminator FIRST: an unfiltered Navigate DOES surface beta (proves the
 /// leak path exists and the red assertion is satisfiable). Then the filtered
 /// Navigate must return only content-matching hits — beta never surfaces,
@@ -139,13 +179,14 @@ async fn filtered_navigate_never_leaks_foreign_source_moon() {
     let moon = Arc::new(moon);
     let scope = fresh_scope();
 
-    let ops = vec![
+    let mut ops = vec![
         node(eid(1), "alpha"),
         vector(eid(1), "alpha", emb(1.0, 0.0)),
         node(eid(2), "beta"),
         vector(eid(2), "beta", emb(0.0, 10.0)),
         edge(eid(1), eid(2)),
     ];
+    ops.extend(filler_ops());
     moon.atomic_write(&scope, &ops).await.expect("production atomic_write");
 
     // Discriminator: unfiltered Navigate surfaces the graph-linked beta.

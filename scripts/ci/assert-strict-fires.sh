@@ -50,6 +50,12 @@ must_fail ingest         cargo test -p lunaris-ingest       --features moon-it -
 must_fail storage-moon   cargo test -p lunaris-storage-moon --features moon-it --no-fail-fast
 must_fail server-graph   cargo test -p lunaris-server   --test recall_graph_mode_live --no-fail-fast
 must_fail retrieve-aggr  cargo test -p lunaris-retrieve --test d_aggregate_operator  --no-fail-fast
+# R5 (2026-08-27): integration.yml now runs `-p lunaris-retrieve` against the
+# live Moon. This entry is what stops that step from silently degrading into a
+# no-op — `navigate_filter_moon` routes its skip through
+# `strict_skip::note_unavailable`, so if the fixture ever stops being reachable
+# the suite must go RED, not report a 0.00s green.
+must_fail retrieve-nav   cargo test -p lunaris-retrieve --test navigate_filter_moon --no-fail-fast
 
 # The lunaris-memory targets integration.yml un-ignores, each checked
 # separately: a single cargo invocation would let ONE failing target mask a
