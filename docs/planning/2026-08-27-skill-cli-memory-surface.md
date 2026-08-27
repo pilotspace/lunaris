@@ -65,19 +65,56 @@ agent when to write. That is the active ingredient this plan ships.
 Both transports already reach the **identical** `dispatch`. This plan is a
 transport swap plus a judgment layer, **not** an architecture change.
 
-### Op coverage today
+### Op coverage today — the full surface sweep
 
-`MemoryRequest` has **21** variants (`crates/lunaris-memory-service/src/protocol.rs`):
-`Ingest · Recall · Forget · Remember · Profile · Retention · RetentionEnforce ·
-RecordDecision · RecordEdit · Feedback · Status · RepairVectors ·
-ScratchpadWrite · ScratchpadRead · ScratchpadGrep · ScratchpadConsolidate ·
-ScratchpadHandover · VerifyAgenda · Resolve · DreamAgenda · Distill`
+Counted across **every** surface, not just the shared dispatch. 12 binaries
+exist in the workspace; 5 are memory surfaces (`lunaris`, `lunaris-contextd`,
+`lunaris-hook`, `lunaris-mcp`, `lunaris-server`), the rest are codegen / bench
+/ eval tooling.
 
-| surface | ops exposed |
-|---|---|
-| `lunaris-mcp` | 20 |
-| `lunaris-cli` | **5** — `try`, `recall`, `repair-vectors`, `status`, `forget` |
-| **CLI write ops** | **0** |
+| surface | ops | reaches the shared `dispatch`? |
+|---|---|---|
+| `MemoryRequest` (`lunaris-memory-service/src/protocol.rs`) | **21** | it IS the dispatch |
+| `lunaris-mcp` `#[tool]` roster | **20** | 19 shared + 1 MCP-only |
+| `lunaris` CLI | **5** | yes |
+| `ContextRequest` (`lunaris-hook/src/context.rs`) | **8** | 1 (`Memory` umbrella) + **7 hook-only** |
+| `lunaris-server` HTTP | **9** under `/v1` + 4 infra | partly |
+| SDK `ScopedLunaris` (Py + TS) | **8** methods | in-process |
+
+**Distinct memory operations across all surfaces: 34**
+= 21 shared + 1 MCP-only + 7 hook-only + 5 inspector-only.
+**CLI coverage is 5 of 34. CLI write ops: 0.**
+
+`MemoryRequest` (21): `Ingest · Recall · Forget · Remember · Profile ·
+Retention · RetentionEnforce · RecordDecision · RecordEdit · Feedback ·
+Status · RepairVectors · ScratchpadWrite · ScratchpadRead · ScratchpadGrep ·
+ScratchpadConsolidate · ScratchpadHandover · VerifyAgenda · Resolve ·
+DreamAgenda · Distill`
+
+#### Three asymmetries that change the work
+
+1. **`memory.list_scopes` is MCP-ONLY.** `grep -c 'ListScopes'
+   crates/lunaris-memory-service/src/protocol.rs` = **0**. It is implemented in
+   `crates/lunaris-mcp/src/tools/list_scopes.rs` and, separately, in
+   `crates/lunaris-server/src/routes/browse.rs` — never on the shared dispatch.
+   **Deleting MCP deletes the capability** unless it is ported first. This is a
+   Phase 6 precondition, not a detail.
+2. **`RepairVectors` and `ScratchpadHandover` are on the protocol but NOT on
+   MCP** (`grep -c` = 0 for both in `crates/lunaris-mcp/src/main.rs`). The CLI
+   already exposes `repair-vectors`, which MCP never had. Retirement loses
+   nothing here.
+3. **The HTTP server carries a read surface with no `MemoryRequest`
+   equivalent** — `/v1/{graph, episode/{id}, snapshot/{lsn}, browse/{kind},
+   detail/{kind}/{id}}`, the Memory Inspector. Five ops. **Untouched by this
+   plan and unaffected by MCP retirement**, recorded here so its absence from
+   the phases is deliberate rather than an oversight.
+
+#### The 7 hook-only ops stay hook-only
+
+`RecallForPrompt · RecallAfterTool · CaptureToolCall · CaptureToolResult ·
+TurnFeedback · SessionDigest · Health` are the capture/injection path. This
+plan does **not** move them — with one exception: Phase 2 needs `SessionDigest`
+on the CLI, so that one op moves to `MemoryRequest` (see Phase 2).
 
 ### Both memory tiers exist; nothing bridges them
 
@@ -185,7 +222,10 @@ New `Command` variants in `crates/lunaris-cli/src/request.rs`, mapped through
 | `lunaris distill --cluster <id> <prose>` | `Distill` | project |
 | `lunaris dream-agenda` | `DreamAgenda` | union |
 
-**One protocol change is unavoidable.** `SessionDigest` is a **`ContextRequest`**
+**TWO protocol moves are unavoidable**, each across all **four seams**
+(enum variant, `scope()` accessor arm, `op()` label, `dispatch` arm).
+
+**Move 1 — `SessionDigest`.** `SessionDigest` is a **`ContextRequest`**
 variant, NOT a `MemoryRequest` (`grep -c 'SessionDigest'
 crates/lunaris-memory-service/src/protocol.rs` = 0), and
 `route::Router::dispatch` accepts `MemoryRequest` only. Two options:
@@ -197,6 +237,11 @@ crates/lunaris-memory-service/src/protocol.rs` = 0), and
 - (b) rejected — teach the CLI router to send `ContextRequest` too. Breaks the
   direct fallback, because `ContextService` lives only in contextd. A CLI that
   works only when the daemon is up fails G3.
+
+**Move 2 — `list_scopes`.** MCP-only today
+(`crates/lunaris-mcp/src/tools/list_scopes.rs`; `grep -c 'ListScopes'
+protocol.rs` = 0). It must land on `MemoryRequest` so the capability outlives
+MCP — this is what makes Phase 6 safe, and it is why **G9** exists.
 
 Every other CLI verb maps to an existing variant with no protocol change.
 
@@ -236,13 +281,29 @@ four. *Mutation:* drop a prefix from the default list -> must red.
 
 Run it. Census after. **This is the gate that matters** (G6).
 
-### Phase 6 — retire MCP · 0.5d · gated on Phase 5
+### Phase 6 — retire MCP · 0.5d · gated on Phase 5 AND G9
 
-Delete `crates/lunaris-mcp`, `crates/lunaris-mcp-npm`, `crates/lunaris-mcp-py`;
-update `README.md`, `docs/book/src/mcp/`, `docs/integration/claude-code.md`,
-`docs/integration/codex.md`, the npx/uvx distribution, and
-`crates/lunaris-mcp/tests/server_boot.rs`'s 20-tool roster guard. Deleted
-crates get tombstones, never yanks.
+**Preconditions, both hard:**
+
+1. **G6 green** — the census proves the replacement over >=10 real sessions.
+2. **G9 green** — every MCP tool name has a reachable non-MCP equivalent.
+   Today exactly one fails that check: **`memory.list_scopes`**, which exists
+   only on MCP and on the HTTP `/v1/scopes` route. Phase 2's Move 2 ports it.
+
+**Deletion set:** `crates/lunaris-mcp`, `crates/lunaris-mcp-npm`,
+`crates/lunaris-mcp-py`. Deleted crates get tombstones, never yanks.
+
+**Doc/dist surfaces to update:** `README.md`, `docs/book/src/mcp/`,
+`docs/integration/claude-code.md`, `docs/integration/codex.md`, the npx/uvx
+distribution, `.mcp.json`, and the 20-tool roster guard in
+`crates/lunaris-mcp/tests/server_boot.rs` (which is deleted with the crate —
+G9 becomes its successor).
+
+**Explicitly NOT affected:** the `lunaris-server` HTTP surface, including the
+Memory Inspector routes (`/v1/{graph, episode/{id}, snapshot/{lsn},
+browse/{kind}, detail/{kind}/{id}}`). They are a peer surface, not an MCP
+consumer, and they survive retirement untouched.
+
 
 ---
 
@@ -286,6 +347,7 @@ LongMemEval where the questions are your own failures.
 | G6 | **the agent actually writes** (M1 over >=10 sessions) | the whole thesis | **yes** |
 | G7 | net token reduction | context-cost driver | yes |
 | G8 | `/dream` and `/remember` run with no MCP present | portability driver | yes |
+| G9 | **every MCP tool name has a reachable non-MCP equivalent** | nothing is lost to retirement | yes, gates Phase 6 |
 
 ---
 
@@ -299,6 +361,13 @@ LongMemEval where the questions are your own failures.
 - **542 > 512 scopes.** This plan stops new proliferation for durable writes;
   it does not reduce the existing count. Recall p99 degradation above Moon's
   soft limit is documented, **not measured here**.
+- **A partial surface inventory reads exactly like a complete one.** The first
+  draft of this plan counted `MemoryRequest`'s 21 ops and treated them as the
+  universe; the real figure is **34** across six surfaces, and the gap hid
+  `list_scopes` — a capability MCP retirement would have silently deleted.
+  **G9 is the automated successor to that catch**: it keys on the decision
+  ("nothing is lost"), not on a human re-reading the roster.
+
 - **MCP retirement blast radius** — README, book, two integration guides, the
   npx/uvx distribution, and the roster guard. Gated behind G6 for exactly
   this reason.
