@@ -244,7 +244,51 @@ The bad release's git tag stays — the audit trail is more important
 than the published artifact disappearing. This section covers registry
 artifacts only; rolling a **deployment** back is §7.
 
-## 7. Deployment upgrade / rollback — 0.6.2 ↔ 0.7.0
+## 7. Deployment upgrade / rollback
+
+### 7a. Moon-to-Moon releases (0.7.0 and later) — `moon-inplace-rollback-drill.sh`
+
+Nothing after 0.7.0 crosses a storage backend, so §7b below — which needs
+`lunaris-migrate`, a SQLite store and a re-embed step — rehearses a transition
+those releases do not perform. `scripts/release/moon-inplace-rollback-drill.sh`
+covers the hop they do: swap the binary, leave the store alone.
+
+```bash
+DRILL_MOON_BIN=~/.lunaris/bin/moon \
+DRILL_SERVER_OLD=/path/to/previous/lunaris-server \
+DRILL_SERVER_NEW=/path/to/candidate/lunaris-server \
+DRILL_NO_EMBEDDER=1 \
+scripts/release/moon-inplace-rollback-drill.sh
+```
+
+Four phases on one scratch Moon (port 6402): old writes → new reads it and
+writes → **old reads what the new binary wrote** → new reads all three eras.
+The third is the one the drill exists for; everything else can pass while it
+fails. Both servers may be built `--no-default-features`, since the hard
+assertions go through `/v1/browse/episode` and need no embedder.
+
+> **Rehearsed on: 2026-08-27** — 0.7.1 ↔ 0.8.0, both servers built
+> `--no-default-features`, scratch Moon 0.8.5 on 6402 with
+> `--max-unflushed-immutable-segments 0`. **DRILL PASS, 0 checks skipped.**
+> The 0.7.1 binary read back the episode the 0.8.0 binary wrote, and 0.8.0
+> then read all three eras after the round trip. Every phase asserts the
+> `version` field `/readyz` reports, so a stale process on the port cannot
+> satisfy a check.
+>
+> The drill was mutation-checked twice rather than trusted for being green:
+> deleting the new binary's write failed it at phase 2, and pointing phase 3
+> at a marker nothing ever wrote failed it at phase 3 by name, with phases 1
+> and 2 still passing.
+>
+> Two findings, both in the drill rather than in Lunaris. `/readyz` returns
+> 503 on a no-embedder build (`ping: ok, canary: ok, embedder: error`) — the
+> correct answer, so the check now asserts that exact shape instead of
+> demanding 200, and a storage failure can no longer hide behind the embedder
+> being the expected failure. And `jq -r '.ready // "missing"'` reports
+> `false` as `"missing"`, because jq's `//` treats `false` as empty; the
+> check asks `has("ready")` first.
+
+### 7b. Backend-crossing upgrade / rollback — 0.6.2 ↔ 0.7.0
 
 > **Rehearsed on: 2026-08-18** — operator: Claude (delegated release
 > captain, GA-4). Both directions ran live on macOS/M4 Pro against a
