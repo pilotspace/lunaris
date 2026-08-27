@@ -1,6 +1,6 @@
 [package]
 name = "lunaris-book-tests"
-version = "0.7.1"
+version = "0.8.0"
 edition = "2024"
 publish = false
 # Inherit the workspace Apache-2.0 licence. Without this cargo-deny's

@@ -1,6 +1,6 @@
 {
   "name": "@pilotspace/lunaris-mcp",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "type": "module",
   "description": "Lunaris MCP server — no Rust toolchain required. Downloads a prebuilt native binary on install.",
   "main": "bin/wrapper.js",
