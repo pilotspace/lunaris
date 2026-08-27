@@ -1,8 +1,10 @@
 # Lunaris release runbook
 
-How to cut a Lunaris release. The examples below use v0.7.0 going out
-on top of the shipped v0.6.2 (the current workspace version); future
-patch / minor releases follow the same flow with the version bumped.
+How to cut a Lunaris release. Every copy-pasteable command below reads
+the version from `Cargo.toml` rather than naming one, because a hardcoded
+number here went stale through two releases: this file still said `0.7.0`
+while 0.7.1 shipped, so §5's post-release smoke test verified the PREVIOUS
+version and passed without touching the artifact just published.
 Deployment-side upgrade/rollback (as opposed to registry artifacts) is
 §7.
 
@@ -10,19 +12,21 @@ Audience: the release captain. Most steps are verifiable by checking
 the artifact's output; the human gate is the "GO / NO-GO" review at
 step 6.
 
-## TL;DR for v0.7.0
+## TL;DR
 
 ```bash
-# 0. Branch is green
-git checkout v0.7.0 && git pull
+# 0. Main is green, and VER is whatever the workspace says it is
+git checkout main && git pull
+VER=$(grep -A20 '\[workspace.package\]' Cargo.toml | grep '^version' | head -1 | sed 's/version *= *"\(.*\)".*/\1/')
+echo "releasing $VER"
 make ci-local                                # fmt + clippy + test + verify-small/large
 
-# 1. Workspace version is the one CHANGELOG documents
-grep '^version' Cargo.toml | head -1         # must be 0.7.0
+# 1. That version is the one CHANGELOG documents, and every surface agrees
+scripts/release-preflight.sh                 # 10 gates; gate 10 is version parity
 
 # 2. Tag + push
-git tag -a v0.7.0 -m "v0.7.0 — Moon-only storage"
-git push origin v0.7.0
+git tag -a "v$VER" -m "v$VER"
+git push origin "v$VER"
 
 # 3. CI does NOT run on the tag. `ci.yml` triggers on main pushes + PRs
 #    only, so semver-checks (advisory) and the lunaris-core
@@ -33,7 +37,7 @@ git push origin v0.7.0
 #    tag-gated job — the dormant submodule-tag-parity / RELEASE-05 job was
 #    removed in issue #136.)
 #
-#    integrations-publish is new in 0.7.2 (W4.7) and its FIRST run is
+#    integrations-publish arrived in W4.7 and its FIRST run is
 #    owner-gated: it uploads `lunaris-integrations` with
 #    `secrets.MATURIN_PYPI_TOKEN`, the token python-prebuild.yml uses for the
 #    `lunaris` project. If that token is project-scoped it CANNOT upload a
@@ -195,7 +199,7 @@ cp311 / cp312 across linux-x86_64, linux-aarch64, macos-universal2,
 windows-x86_64. TypeScript `.node` binaries target the matching set
 via `napi prepublish`.
 
-Both flows trigger automatically on the tag push (`v0.4.*`). The
+Both flows trigger automatically on the tag push (the trigger is `v*`, not a per-minor glob). The
 `maturin publish` and `npm publish` commands above are the local-fallback
 recipe if CI doesn't run.
 
@@ -203,9 +207,21 @@ recipe if CI doesn't run.
 
 After all artifacts are public:
 
-- `cargo add lunaris-memory@0.7.0` into a fresh `cargo new` project, then `cargo build --locked` — verifies the published umbrella crate. (The bare `lunaris` name on crates.io is an unrelated project; and `examples/quickstart-rs` uses a workspace **path** dep, so building it in-tree does **not** exercise the published crate.)
-- `pip install lunaris==0.7.0 && python examples/quickstart-py/quickstart.py`
-- `npm install @pilotspace/lunaris@0.7.0 && cd examples/quickstart-ts && npm start`
+These are commands to RUN, so they carry the version being released. Set it
+once — a hardcoded number here went stale through two releases (it still said
+`0.7.0` while 0.7.1 shipped), and a smoke test pinned to the PREVIOUS version
+passes without touching the artifact you just published:
+
+```bash
+VER=$(grep -A20 '\[workspace.package\]' Cargo.toml | grep '^version' | head -1 | sed 's/version *= *"\(.*\)".*/\1/')
+```
+
+- `cargo add lunaris-memory@"$VER"` into a fresh `cargo new` project, then `cargo build --locked` — verifies the published umbrella crate. (The bare `lunaris` name on crates.io is an unrelated project; and `examples/quickstart-rs` uses a workspace **path** dep, so building it in-tree does **not** exercise the published crate.)
+- `pip install "lunaris==$VER" && python examples/quickstart-py/quickstart.py`
+- `npm install "@pilotspace/lunaris@$VER" && cd examples/quickstart-ts && npm start`
+
+A registry `publish` that exits 0 does **not** mean the version is servable —
+verify each of the three by fetching it, not by trusting the upload step.
 
 Each must reach "ingested episode at lsn=..." on a clean machine.
 
