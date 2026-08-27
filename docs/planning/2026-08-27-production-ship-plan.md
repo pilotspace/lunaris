@@ -157,15 +157,48 @@ shared files, and neither gates M.
 | 2 | backup + restore drill | **DONE** — RPO=0 / RTO<1s |
 | 3 | ops docs complete | **DONE** |
 | 4 | distribution live on all three registries | **DONE** — 0.7.1 |
-| 5 | **M — curated memories exist and are used** | **OPEN** — the critical path |
-| 6 | R5 fixed AND `lunaris-retrieve` gated in CI | **OPEN** |
-| 7 | F26 resolved or documented as a known Moon limitation | **OPEN** |
-| 8 | `release-preflight.sh` green on the release commit | pending |
+| 5 | **M — curated memories exist and are used** | **NOT MET — reclassified, see below** |
+| 6 | R5 fixed AND `lunaris-retrieve` gated in CI | **DONE** — PR #217: fixture corrected, `integration.yml` runs the crate against a live Moon, `assert-strict-fires.sh` gained `retrieve-nav` |
+| 7 | F26 resolved or documented as a known Moon limitation | **DONE** — documented; the reverse-ratchet `f26_workaround_still_needed.rs` fires when the vendored Moon gains the parser fix, and moon#648 closed COMPLETED 2026-08-23 |
+| 8 | `release-preflight.sh` green on the release commit | **DONE** — 10/10 at 0.7.1, re-run at 0.8.0 |
 | 9 | branch protection (W1.3) | **OWNER** |
 | 10 | LME N=125 A/B republished (W3.3) | **OWNER** |
+| 11 | `lunaris-integrations` publishable to PyPI | **OWNER — new** |
 
-**Ship when 5, 6, 7, 8 are green.** 9 and 10 are owner actions that should land
-before the announcement but do not block the artifacts.
+### Gate 5 is not met, and 0.8.0 ships anyway
+
+This table originally said "ship when 5, 6, 7, 8 are green". Gate 5 asks
+whether curated memories exist and are used; on the production store today,
+across 303,874 episodes, there are zero. Closing it means building the
+agent-facing skill that decides *when* to call `memory.remember`, which is the
+0.9.0 memory-surface milestone — a milestone, not a release blocker.
+
+Shipping 0.8.0 with gate 5 open is a deliberate call, and it is only defensible
+because the release does not claim otherwise. `CHANGELOG.md`'s 0.8.0 entry
+opens with "What this release does *not* claim" and states the zero-curated-
+memories measurement outright. 0.8.0 ships the *capability* (`memory.remember`,
+`memory.profile`, retention, a readable audit trail); 0.9.0 ships the
+*behaviour*. What would be wrong is shipping the capability and describing it
+as the behaviour.
+
+### Gate 11 — `lunaris-integrations` is not on PyPI
+
+Found while walking the runbook: the name returns HTTP 404, identical to an
+invented package name, while `lunaris` and `lunaris-mcp` return 200. Its
+publish workflow exists and is correct, but its first run is gated on
+`secrets.MATURIN_PYPI_TOKEN` being scoped to the `lunaris` project — it will
+403 until the owner widens it or creates a `lunaris-integrations` PyPI project
+with a scoped token under the same secret name. `docs/POSITIONING.md` and the
+book's why-lunaris page both tell readers to `pip install
+lunaris-integrations[langgraph]`, so the claim is false for strangers until
+this is resolved. The 0.8.0 CHANGELOG says so explicitly, so the release is
+honest either way; resolving the token makes the docs true instead.
+
+This is an owner action on a secret. It does not block the Rust/npm/PyPI
+`lunaris` artifacts.
+
+**Ship when 6, 7 and 8 are green** — they are. 9, 10 and 11 are owner actions
+that should land before the announcement but do not block the artifacts.
 
 ---
 
