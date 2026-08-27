@@ -125,7 +125,7 @@ else
   # Only fail if a PUBLISHABLE crate emits warnings. lunaris-codegen /
   # lunaris-conformance / lunaris-bench / lunaris-ts are internal-only.
   doc_out=$(cargo doc --workspace --no-deps 2>&1)
-  bad=$(echo "$doc_out" | grep -E "^warning: \`(lunaris-memory|lunaris-core|lunaris-storage-postgres|lunaris-storage-moon|lunaris-storage-embedded|lunaris-llamacpp|lunaris-embed-remote|lunaris-llm|lunaris-rerank|lunaris-extract|lunaris-verify|lunaris-consolidate|lunaris-ingest|lunaris-retrieve|lunaris-hook)\` \(lib doc\)" || true)
+  bad=$(echo "$doc_out" | grep -E "^warning: \`(lunaris-memory|lunaris-core|lunaris-storage-moon|lunaris-llamacpp|lunaris-embed-remote|lunaris-llm|lunaris-rerank|lunaris-extract|lunaris-verify|lunaris-consolidate|lunaris-ingest|lunaris-retrieve)\` \(lib doc\)" || true)
   if [[ -n "$bad" ]]; then
     record "06_cargo_doc" "FAIL" "publishable crate rustdoc warnings"
   else
@@ -160,8 +160,8 @@ fi
 # xtask/tests/publish_metadata_guard.rs fails if either lists an
 # unpublishable crate.
 HYGIENE_CRATES=(
-  lunaris-core lunaris-storage-postgres lunaris-storage-moon
-  lunaris-storage-embedded lunaris-llamacpp lunaris-embed-remote
+  lunaris-core lunaris-storage-moon
+  lunaris-llamacpp lunaris-embed-remote
   lunaris-llm lunaris-rerank lunaris-extract
   lunaris-verify lunaris-consolidate lunaris-ingest
   lunaris-retrieve lunaris

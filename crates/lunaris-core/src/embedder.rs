@@ -167,7 +167,7 @@ fn lcg(state: &mut u64) -> f32 {
 /// Deterministic stand-in for a real embedding: unit-norm and clustered.
 ///
 /// Two things were wrong with the previous generator. It claimed to emit
-/// "floats in [-1, 1]" and emitted [-1, 0] (see [`lcg`]), so every vector sat
+/// "floats in [-1, 1]" and emitted [-1, 0] (see `lcg`), so every vector sat
 /// in the all-negative orthant at high mutual cosine similarity. And the
 /// coordinates were independent, which in high dimension puts every pair at
 /// nearly the same distance — "the nearest neighbour" becomes a coin-flip

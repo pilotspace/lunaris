@@ -408,7 +408,7 @@ impl StoragePort for MoonStorage {
     }
 
     /// W4.6 / D6.3 — non-destructive range read; see
-    /// [`crate::queue::queue_range`] for why this is `XRANGE` and not the MQ
+    /// `crate::queue::queue_range` for why this is `XRANGE` and not the MQ
     /// consumer surface.
     async fn queue_range(
         &self,
