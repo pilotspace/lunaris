@@ -163,7 +163,7 @@ shared files, and neither gates M.
 | 8 | `release-preflight.sh` green on the release commit | **DONE** — 10/10 at 0.7.1, re-run at 0.8.0 |
 | 9 | branch protection (W1.3) | **OWNER** |
 | 10 | LME N=125 A/B republished (W3.3) | **OWNER** |
-| 11 | `lunaris-integrations` publishable to PyPI | **OWNER — new** |
+| 11 | `lunaris-integrations` publishable to PyPI | **DONE** — published 0.8.0 on the tag; the 403 this row predicted did not happen |
 
 ### Gate 5 is not met, and 0.8.0 ships anyway
 
@@ -181,7 +181,7 @@ memories measurement outright. 0.8.0 ships the *capability* (`memory.remember`,
 *behaviour*. What would be wrong is shipping the capability and describing it
 as the behaviour.
 
-### Gate 11 — `lunaris-integrations` is not on PyPI
+### Gate 11 — `lunaris-integrations` reached PyPI on the 0.8.0 tag (RESOLVED)
 
 Found while walking the runbook: the name returns HTTP 404, identical to an
 invented package name, while `lunaris` and `lunaris-mcp` return 200. Its
@@ -194,8 +194,17 @@ lunaris-integrations[langgraph]`, so the claim is false for strangers until
 this is resolved. The 0.8.0 CHANGELOG says so explicitly, so the release is
 honest either way; resolving the token makes the docs true instead.
 
-This is an owner action on a secret. It does not block the Rust/npm/PyPI
-`lunaris` artifacts.
+**Resolved by the tag, and the prediction was wrong.** `integrations-publish`
+succeeded on its first run: PyPI now serves `lunaris-integrations` 0.8.0 with a
+wheel, an sdist and the `crewai` / `langgraph` / `letta` / `sdk` / `test`
+extras. `MATURIN_PYPI_TOKEN` was not narrowly scoped after all, so no owner
+action was needed.
+
+Worth keeping the reasoning visible rather than deleting the row: the 404 was
+real and control-verified, and the workflow header itself warned the first run
+was owner-gated. Treating that warning as a fact about the token — rather than
+as an untested hypothesis about it — is what produced a wrong prediction that
+reached the shipped CHANGELOG and had to be corrected after the fact.
 
 **Ship when 6, 7 and 8 are green** — they are. 9, 10 and 11 are owner actions
 that should land before the announcement but do not block the artifacts.

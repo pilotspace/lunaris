@@ -45,10 +45,13 @@ make that visible rather than paper over it: an empty scope renders a page
 that says "nothing captured yet" and names `memory.remember`, rather than a
 blank page that could be mistaken for "nothing to see".
 
-`lunaris-integrations` is **not on PyPI**. Its publish workflow exists but its
-first run is owner-gated on a PyPI token scoped to the `lunaris` project;
-until that is widened, `pip install lunaris-integrations[langgraph]` does not
-resolve. Use the adapters from a source checkout of `integrations/`.
+`lunaris-integrations` **is** on PyPI as of this release — 0.8.0 is its first
+ever publish, carrying a wheel and an sdist with the `crewai`, `langgraph`,
+`letta`, `sdk` and `test` extras. Before the tag the name returned HTTP 404 and
+`integrations/README.md` had been telling readers to install it since v0.7.1.
+The concern recorded here while the release was being prepared — that the
+publish would 403 because `MATURIN_PYPI_TOKEN` is scoped to the `lunaris`
+project — did not materialise: the upload succeeded on its first run.
 
 
 ### Added
