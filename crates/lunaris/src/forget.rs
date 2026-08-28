@@ -113,6 +113,14 @@ pub struct ForgetReceipt {
     #[serde(default)]
     pub matched: u64,
     /// Soft-delete MVCC writes (zero for hard / dry-run).
+    ///
+    /// Counts the forgotten CONTENT rows — the episode and its chunks — and
+    /// deliberately excludes the activation-ledger rows the same batch
+    /// retires (`ledger_retire_ops`). Two reasons: this number is the blast
+    /// radius a caller is asked to confirm, and ledger bookkeeping is not
+    /// content; and including it would make the count depend on whether an
+    /// episode happened to have been referenced, so the same forget of the
+    /// same content would report different numbers on different stores.
     pub rows_written: u64,
     /// Irreversible deletes (hard-only; zero for soft / dry-run).
     pub rows_deleted: u64,
@@ -332,7 +340,7 @@ impl Lunaris {
 
             // Build the WriteOp set: hard → KvDelete; soft → KvPut with MVCC
             // sys_to-stamped payload (B-4 + B-5).
-            let ops: Vec<WriteOp> = if request.options.hard {
+            let mut ops: Vec<WriteOp> = if request.options.hard {
                 matches.iter().map(|m| WriteOp::KvDelete { key: m.key.clone() }).collect()
             } else {
                 matches
@@ -340,6 +348,23 @@ impl Lunaris {
                     .map(|m| build_soft_delete_op(m, self.clock.as_ref()))
                     .collect::<Result<Vec<_>, _>>()?
             };
+
+            // Retire the matched rows' activation-ledger entries in the SAME
+            // op vector (D-19). This deprecated entry point reads and writes
+            // under `Scope::dev()`; the ledger must follow it there or the
+            // rows it leaves behind are orphaned in a different partition
+            // than the one the caller thinks it forgot from.
+            // scope-dev-allowed: deprecated-Lunaris::forget-routes-here-until-v0.4
+            ops.extend(
+                ledger_retire_ops(
+                    self.storage.as_ref(),
+                    &lunaris_core::Scope::dev(),
+                    &matched_row_ids(&matches),
+                    request.options.hard,
+                    self.clock.as_ref(),
+                )
+                .await?,
+            );
 
             // D-19 single-call invariant: at most ONE atomic_write per forget
             // call. Skip when there are zero matches (publishing an empty op
@@ -667,11 +692,24 @@ pub(crate) async fn forget_scoped(
             });
         }
 
-        let ops: Vec<WriteOp> = if request.options.hard {
+        let mut ops: Vec<WriteOp> = if request.options.hard {
             matches.iter().map(|m| WriteOp::KvDelete { key: m.key.clone() }).collect()
         } else {
             matches.iter().map(|m| build_soft_delete_op(m, clock)).collect::<Result<Vec<_>, _>>()?
         };
+
+        // Retire the activation-ledger rows of everything forgotten. Appended
+        // to the SAME op vector, never a second write (D-19).
+        ops.extend(
+            ledger_retire_ops(
+                storage.as_ref(),
+                scope,
+                &matched_row_ids(&matches),
+                request.options.hard,
+                clock,
+            )
+            .await?,
+        );
 
         // D-19: at most ONE atomic_write per forget call — under the REAL scope.
         if !ops.is_empty() {
@@ -818,6 +856,101 @@ fn drop_already_closed(matches: &mut Vec<ForgetMatch>, hard: bool) {
 fn episode_match_count(matches: &[ForgetMatch], scope: &lunaris_core::Scope) -> u64 {
     let prefix = lunaris_core::keyspace::episode_prefix(scope);
     matches.iter().filter(|m| m.key.starts_with(&prefix)).count() as u64
+}
+
+/// The ids carried by `matches`, whatever kind of row each one is.
+///
+/// [`matched_episode_ids`] is episode-only *by position* — it is called on a
+/// vector that does not yet hold chunk rows, and a `Chunk` payload also
+/// carries an `id`. This one is deliberately kind-agnostic: every row in
+/// `matches` is being forgotten, so an activation-ledger row keyed by ANY of
+/// their ids is orphaned from this point on.
+fn matched_row_ids(matches: &[ForgetMatch]) -> std::collections::HashSet<Ulid> {
+    matches
+        .iter()
+        .filter_map(|m| serde_json::from_slice::<serde_json::Value>(&m.payload).ok())
+        .filter_map(|v| v.get("id").and_then(|id| id.as_str()).and_then(|s| s.parse::<Ulid>().ok()))
+        .collect()
+}
+
+/// Ops that retire the activation-ledger rows of the rows a forget matched.
+///
+/// Nothing else in the codebase retires a ledger row, so before this every
+/// forget left one behind permanently. That row is not inert: the dream
+/// planner hydrates it, finds the episode sys-closed, and drops it (one
+/// wasted round trip per orphan), while the SessionStart `/dream` nudge
+/// counts it WITHOUT hydrating — `.add/tasks/dream-skill/TASK.md` §3 freezes
+/// that cheap count and accepts that it "over-counts slightly". That
+/// assumption is sound; nothing retiring the rows is what broke it. A census
+/// of the live store found 18,471 ledger rows of which 5 resolved to an
+/// episode.
+///
+/// Two rules keep this from becoming its own source of garbage:
+///
+/// 1. **Read before write — never mint a row.** An episode that was never
+///    referenced has no ledger row, and a forget must not create an archived
+///    one for it.
+/// 2. **Skip rows already archived.** Re-stamping `archived_at` on every
+///    forget would rewrite history for no gain.
+///
+/// A hard forget deletes the row; a soft forget archives it, reusing
+/// `archived_at` — the existing vocabulary for "no longer a dream candidate"
+/// (engram-soul-loop task 8b) rather than a second notion of retirement.
+///
+/// Returns ops for the caller to append to its single `atomic_write` (D-19):
+/// this must never issue a write of its own.
+async fn ledger_retire_ops(
+    storage: &dyn StoragePort,
+    scope: &lunaris_core::Scope,
+    ids: &std::collections::HashSet<Ulid>,
+    hard: bool,
+    clock: &HlcClock,
+) -> Result<Vec<WriteOp>, LunarisError> {
+    use lunaris_core::activation::ActivationRecord;
+    use lunaris_core::keyspace::activation_key;
+
+    // Deterministic op order for a reproducible batch, same rationale as
+    // `record_activation_refs`' first-seen ordering.
+    let mut sorted: Vec<Ulid> = ids.iter().copied().collect();
+    sorted.sort_unstable();
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let mut ops = Vec::new();
+    for id in sorted {
+        let key = activation_key(scope, id);
+        let Some(row) =
+            storage.read_as_of(scope, &key, clock.tick()).await.map_err(LunarisError::Storage)?
+        else {
+            continue; // rule 1: never mint a ledger row on a forget
+        };
+        if hard {
+            ops.push(WriteOp::KvDelete { key });
+            continue;
+        }
+        // A corrupt record is treated as already-retired rather than
+        // reseeded: `record_activation_refs` reseeds because it is adding
+        // reinforcement, but there is nothing to preserve on the way out, and
+        // overwriting an unreadable row with a synthetic one would destroy
+        // whatever a later forensic read might have recovered.
+        let Ok(mut record) = serde_json::from_slice::<ActivationRecord>(&row.value) else {
+            continue;
+        };
+        if record.is_archived() {
+            continue; // rule 2
+        }
+        record.archived_at = Some(now);
+        let value = serde_json::to_vec(&record).map_err(|e| {
+            LunarisError::Storage(StorageError::Backend(format!(
+                "activation record serialize: {e}"
+            )))
+        })?;
+        ops.push(WriteOp::KvPut { key, value });
+    }
+    Ok(ops)
 }
 
 /// The ulids of the episodes a scan matched, read from the payloads.
