@@ -125,6 +125,10 @@ struct RawFact {
 
 /// Validate a [`DreamConfig`] BEFORE any storage call. Returns the frozen
 /// §3 CONTRACT reject code on failure.
+/// Concurrent in-flight episode hydrate reads, mirroring
+/// `lunaris_retrieve::hydrate`'s `HYDRATE_CONCURRENCY = 32`.
+const HYDRATE_CONCURRENCY: usize = 32;
+
 fn validate(cfg: &DreamConfig) -> Result<(), &'static str> {
     if cfg.limit == 0 || cfg.limit > 100 {
         return Err("invalid_limit");
@@ -167,8 +171,25 @@ pub async fn build_dream_agenda(
     let refs = ledger.scan(scope).await?;
 
     // 2. Hydrate + exclude + activation-filter.
-    let mut candidates: Vec<Candidate> = Vec::with_capacity(refs.len());
-    for (id, record) in refs {
+    //
+    // The hydrate read is issued CONCURRENTLY (`buffer_unordered`), mirroring
+    // `lunaris_retrieve::hydrate`'s episode pass. It used to be a sequential
+    // `for` loop doing one `read_as_of` per ledger ref, which is an N+1: on a
+    // live scope with ~1.1k refs that serialised into >10s and the whole
+    // `dream_agenda` call died on Moon's op timeout
+    // (`storage: backend: moon: timed out`), so the agenda was unreachable at
+    // real scale regardless of what it would have contained.
+    //
+    // Ordering is preserved explicitly: completion order under
+    // `buffer_unordered` is nondeterministic, and cluster member lists are
+    // observable output, so candidates are re-sorted by ulid afterwards. That
+    // reproduces the ascending-key order a prefix `scan_range` yields while no
+    // longer DEPENDING on the backend to yield it.
+    //
+    // A storage error still fails the whole call (`?`), exactly as the
+    // sequential loop did — only a MISSING episode is a skip.
+    let live: Vec<(Ulid, lunaris_core::activation::ActivationRecord)> = refs
+        .into_iter()
         // engram-soul-loop task 8b (`memory.distill`) — an archived record
         // (activation drop via `ActivationRecord::archived_at`) is excluded
         // from the candidate set, same as a gone/distilled episode. This is
@@ -176,15 +197,33 @@ pub async fn build_dream_agenda(
         // read below. The episode itself is untouched (not a tombstone) —
         // only its usage boost is suppressed here and in
         // `lunaris_retrieve::LedgerBoostProvider::priors`.
-        if record.is_archived() {
-            continue;
+        .filter(|(_, record)| !record.is_archived())
+        .collect();
+
+    let hydrated: Vec<(
+        Ulid,
+        lunaris_core::activation::ActivationRecord,
+        Option<lunaris_core::Row<bytes::Bytes>>,
+    )> = futures::stream::iter(live.into_iter().map(|(id, record)| {
+        let storage = storage.clone();
+        async move {
+            let key = episode_key(scope, id);
+            storage
+                .read_as_of(scope, &key, read_at)
+                .await
+                .map(|row| (id, record, row))
+                .map_err(LunarisError::Storage)
         }
-        let key = episode_key(scope, id);
-        let row =
-            match storage.read_as_of(scope, &key, read_at).await.map_err(LunarisError::Storage)? {
-                Some(row) => row,
-                None => continue, // episode gone — excluded, never an error (§1 Must)
-            };
+    }))
+    .buffer_unordered(HYDRATE_CONCURRENCY)
+    .collect::<Vec<_>>()
+    .await
+    .into_iter()
+    .collect::<Result<Vec<_>, _>>()?;
+
+    let mut candidates: Vec<Candidate> = Vec::with_capacity(hydrated.len());
+    for (id, record, row) in hydrated {
+        let Some(row) = row else { continue }; // episode gone — excluded, never an error (§1 Must)
         let episode = match serde_json::from_slice::<lunaris_core::Episode>(&row.value) {
             Ok(ep) => ep,
             Err(_) => continue, // corrupt row — treat as gone
@@ -203,6 +242,7 @@ pub async fn build_dream_agenda(
             activation,
         });
     }
+    candidates.sort_unstable_by_key(|c| c.id);
 
     let total_candidates = candidates.len();
     if candidates.is_empty() {
@@ -626,6 +666,151 @@ mod tests {
             !cluster_a.member_ids.contains(&ep_c),
             "ep_c shares no entity and must NOT be a member: {:?}",
             cluster_a.member_ids
+        );
+    }
+
+    /// The candidate hydrate must issue its episode reads CONCURRENTLY.
+    ///
+    /// This used to be a sequential `for` loop doing one `read_as_of` per
+    /// ledger ref. On a live scope with ~1.1k refs that serialised past Moon's
+    /// op timeout and `dream_agenda` died with
+    /// `storage: backend: moon: timed out` — the agenda was unreachable at real
+    /// scale no matter what it would have contained.
+    ///
+    /// Discriminating, not decorative: the probe records the MAXIMUM number of
+    /// `read_as_of` calls in flight at once. A sequential loop can never exceed
+    /// 1, so this fails on the old code for the right reason rather than merely
+    /// being slower.
+    #[tokio::test]
+    async fn candidate_hydrate_reads_concurrently() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct ConcurrencyProbe {
+            inner: Arc<dyn StoragePort>,
+            in_flight: AtomicUsize,
+            peak: Arc<AtomicUsize>,
+        }
+
+        #[async_trait]
+        impl StoragePort for ConcurrencyProbe {
+            async fn atomic_write(
+                &self,
+                scope: &Scope,
+                ops: &[WriteOp],
+            ) -> Result<lunaris_core::Lsn, lunaris_core::StorageError> {
+                self.inner.atomic_write(scope, ops).await
+            }
+            async fn vector_search(
+                &self,
+                scope: &Scope,
+                index: &str,
+                query: &[f32],
+                k: usize,
+                filter: Option<&lunaris_core::Filter>,
+                as_of: Option<Hlc>,
+                rerank: bool,
+            ) -> Result<Vec<lunaris_core::VectorHit>, lunaris_core::StorageError> {
+                self.inner.vector_search(scope, index, query, k, filter, as_of, rerank).await
+            }
+            async fn graph_traverse(
+                &self,
+                scope: &Scope,
+                q: &lunaris_core::CypherQuery,
+                as_of: Option<Hlc>,
+            ) -> Result<lunaris_core::GraphResult, lunaris_core::StorageError> {
+                self.inner.graph_traverse(scope, q, as_of).await
+            }
+            async fn scan_range(
+                &self,
+                scope: &Scope,
+                prefix: &[u8],
+                as_of: Option<Hlc>,
+            ) -> Result<
+                futures::stream::BoxStream<
+                    '_,
+                    Result<(bytes::Bytes, bytes::Bytes), lunaris_core::StorageError>,
+                >,
+                lunaris_core::StorageError,
+            > {
+                self.inner.scan_range(scope, prefix, as_of).await
+            }
+            async fn read_as_of(
+                &self,
+                scope: &Scope,
+                key: &[u8],
+                as_of: Hlc,
+            ) -> Result<Option<lunaris_core::Row<bytes::Bytes>>, lunaris_core::StorageError>
+            {
+                let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                self.peak.fetch_max(now, Ordering::SeqCst);
+                // Hold briefly so overlap is observable rather than a race to
+                // finish; without this a fast backend can serialise by luck.
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                let out = self.inner.read_as_of(scope, key, as_of).await;
+                self.in_flight.fetch_sub(1, Ordering::SeqCst);
+                out
+            }
+            async fn publish(
+                &self,
+                scope: &Scope,
+                topic: &str,
+                partition: u16,
+                payload: bytes::Bytes,
+            ) -> Result<u64, lunaris_core::StorageError> {
+                self.inner.publish(scope, topic, partition, payload).await
+            }
+            async fn subscribe(
+                &self,
+                scope: &Scope,
+                group: &str,
+                topic: &str,
+                partition: u16,
+            ) -> Result<
+                futures::stream::BoxStream<
+                    'static,
+                    Result<lunaris_core::QueueMsg, lunaris_core::StorageError>,
+                >,
+                lunaris_core::StorageError,
+            > {
+                self.inner.subscribe(scope, group, topic, partition).await
+            }
+            fn capabilities(&self) -> lunaris_core::StorageCapabilities {
+                self.inner.capabilities()
+            }
+        }
+
+        let (inner, _guard) = fresh_storage().await;
+        let scope = scope();
+        let now = unix_now();
+
+        // 24 candidates: unmistakably serial under the old loop, yet under
+        // HYDRATE_CONCURRENCY so every read can genuinely overlap.
+        let mut ids: Vec<Ulid> = (0..24).map(|_| Ulid::new()).collect();
+        ids.sort_unstable();
+        for id in &ids {
+            seed_episode(&inner, &scope, *id, "lunaris:tool_call:post", "body").await;
+            seed_activation(&inner, &scope, *id, &[(now - 10, Strength::Weak)]).await;
+        }
+
+        let peak = Arc::new(AtomicUsize::new(0));
+        let probe: Arc<dyn StoragePort> = Arc::new(ConcurrencyProbe {
+            inner: inner.clone(),
+            in_flight: AtomicUsize::new(0),
+            peak: peak.clone(),
+        });
+
+        let cfg = DreamConfig { limit: 20, min_cluster_size: 1, max_activation: None, decay: 0.5 };
+        let agenda = build_dream_agenda(probe, &scope, &cfg, now).await.expect("agenda must build");
+
+        let observed = peak.load(Ordering::SeqCst);
+        assert!(
+            observed > 1,
+            "episode hydrate must overlap reads; peak in-flight was {observed} (1 == the old sequential loop)"
+        );
+        assert_eq!(
+            agenda.total_candidates,
+            ids.len(),
+            "every seeded candidate must survive hydration"
         );
     }
 
