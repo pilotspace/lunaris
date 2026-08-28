@@ -10,6 +10,7 @@ pub mod capture_failures;
 pub mod citation;
 pub mod context;
 pub mod dedupe;
+pub mod digest_cache;
 pub(crate) mod embed_promotion;
 pub mod envelope;
 pub mod filter;
