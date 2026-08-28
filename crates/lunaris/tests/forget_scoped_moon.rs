@@ -328,3 +328,164 @@ async fn hard_forget_leaves_no_recallable_text_moon() {
         .collect();
     assert!(leaked.is_empty(), "the verbatim text survived a confirmed hard delete: {leaked:?}");
 }
+
+// ── forget must not orphan the activation ledger ──────────────────────────
+
+/// Read the raw activation-ledger record for `id`, or `None` when no row
+/// exists. Deliberately reads the row DIRECTLY rather than through
+/// `LedgerReferenceSource`, so this asserts on what is actually stored and
+/// not on a reader's interpretation of it.
+async fn ledger_record(
+    engine: &TestEngine,
+    scope: &Scope,
+    id: Ulid,
+) -> Option<lunaris_core::activation::ActivationRecord> {
+    let storage = engine.storage();
+    let key = lunaris_core::keyspace::activation_key(scope, id);
+    let read_at = engine.clock().tick();
+    let row = storage.read_as_of(scope, &key, read_at).await.expect("read ledger row")?;
+    Some(serde_json::from_slice(&row.value).expect("decode ActivationRecord"))
+}
+
+/// Forgetting an episode must retire its activation-ledger row.
+///
+/// The ledger and the dream planner disagree about what a candidate is, and
+/// this is the seam where they drift apart. `forget` sweeps the episode row
+/// and (since W1.4) its chunk rows, but never touches
+/// `lunaris:{scope}:activation:{id}`. The row it leaves behind is not inert:
+///
+///   * `build_dream_agenda` hydrates it, finds the episode sys-closed, and
+///     drops the candidate — one wasted round trip per orphan, forever.
+///   * the SessionStart `/dream` nudge counts `!is_archived()` ledger rows
+///     WITHOUT hydrating (deliberately — `.add/tasks/dream-skill/TASK.md`
+///     §3 accepts that it "over-counts slightly"), so every orphan inflates
+///     a user-facing count that the planner will not honour.
+///
+/// A census of the live store is what makes this worth a test rather than a
+/// note: 18,471 ledger rows, of which 5 resolve to an episode. The frozen
+/// nudge assumption ("over-counts slightly") is sound; nothing retiring the
+/// rows is what broke it.
+///
+/// `is_archived()` is the existing vocabulary for "no longer a dream
+/// candidate" (engram-soul-loop task 8b, set by `memory.distill`), so a
+/// forget archiving the row reuses it rather than inventing a second notion
+/// of a retired ledger entry. A hard forget may equally delete the row —
+/// hence "gone or archived" rather than a single required shape.
+#[tokio::test]
+async fn forget_retires_the_episodes_activation_ledger_row() {
+    use lunaris_core::activation::{Grain, RefSignal, Strength};
+
+    let engine = open_moon().await;
+    let scope = fresh_scope("ledger");
+    let scoped = engine.scoped(scope.clone());
+
+    let ep_id = Ulid::new();
+    scoped
+        .ingest(EpisodeBuilder::new("wipe-me/ledger", "the vermilion kite never lands").id(ep_id))
+        .await
+        .expect("ingest");
+
+    // Recall referenced it, exactly as the injection path would.
+    scoped
+        .record_activation_refs(&[RefSignal {
+            id: ep_id,
+            grain: Grain::Turn,
+            strength: Strength::Strong,
+        }])
+        .await
+        .expect("record activation ref");
+
+    // Precondition: the row exists and counts as a live dream candidate.
+    // Without this the test could pass on an episode that never had one.
+    let before = ledger_record(&engine, &scope, ep_id).await.expect("ledger row must exist");
+    assert!(!before.is_archived(), "precondition: the fresh ledger row must be live");
+
+    scoped.forget(ForgetTarget::Id(ep_id)).await.expect("forget");
+
+    match ledger_record(&engine, &scope, ep_id).await {
+        None => {} // deleted outright — also correct
+        Some(after) => assert!(
+            after.is_archived(),
+            "forget left a LIVE activation-ledger row for a forgotten episode. \
+             build_dream_agenda will hydrate it, find the episode gone, and drop \
+             it; the /dream nudge will keep counting it. Record: {after:?}"
+        ),
+    }
+}
+
+/// The hard branch is a DIFFERENT branch — it deletes the ledger row rather
+/// than archiving it — so the soft test above proves nothing about it.
+#[tokio::test]
+async fn hard_forget_deletes_the_episodes_activation_ledger_row() {
+    use lunaris_core::activation::{Grain, RefSignal, Strength};
+
+    let engine = open_moon().await;
+    let scope = fresh_scope("hard-ledger");
+    let scoped = engine.scoped(scope.clone());
+
+    let ep_id = Ulid::new();
+    scoped
+        .ingest(
+            EpisodeBuilder::new("wipe-me/hard-ledger", "the indigo lantern is never lit").id(ep_id),
+        )
+        .await
+        .expect("ingest");
+    scoped
+        .record_activation_refs(&[RefSignal {
+            id: ep_id,
+            grain: Grain::Turn,
+            strength: Strength::Strong,
+        }])
+        .await
+        .expect("record activation ref");
+    assert!(
+        ledger_record(&engine, &scope, ep_id).await.is_some(),
+        "precondition: the ledger row must exist before the hard forget"
+    );
+
+    let dry = scoped.forget(ForgetTarget::Id(ep_id).dry_run()).await.expect("dry-run forget");
+    let token = engine.confirm_hard_forget(dry).await.expect("confirm");
+    scoped.forget(ForgetTarget::Id(ep_id).hard().with_token(token)).await.expect("hard forget");
+
+    assert!(
+        ledger_record(&engine, &scope, ep_id).await.is_none(),
+        "a HARD forget left the activation-ledger row behind. The episode is \
+         unrecoverable but the ledger still points at it, so the /dream nudge \
+         keeps counting a memory that can never be distilled."
+    );
+}
+
+/// A dry run must not retire anything — the ledger sweep has to sit on the
+/// commit side of the preview branch, not before it.
+///
+/// Without this, `ledger_retire_ops` could be hoisted above the `dry_run`
+/// early-return during a later refactor and every preview would silently
+/// archive the rows it was only asked to describe.
+#[tokio::test]
+async fn a_dry_run_forget_leaves_the_activation_ledger_untouched() {
+    use lunaris_core::activation::{Grain, RefSignal, Strength};
+
+    let engine = open_moon().await;
+    let scope = fresh_scope("dry-ledger");
+    let scoped = engine.scoped(scope.clone());
+
+    let ep_id = Ulid::new();
+    scoped
+        .ingest(EpisodeBuilder::new("wipe-me/dry-ledger", "the umber sextant reads true").id(ep_id))
+        .await
+        .expect("ingest");
+    scoped
+        .record_activation_refs(&[RefSignal {
+            id: ep_id,
+            grain: Grain::Turn,
+            strength: Strength::Strong,
+        }])
+        .await
+        .expect("record activation ref");
+
+    scoped.forget(ForgetTarget::Id(ep_id).dry_run()).await.expect("dry-run forget");
+
+    let after =
+        ledger_record(&engine, &scope, ep_id).await.expect("dry run must not delete the row");
+    assert!(!after.is_archived(), "a dry-run forget archived the ledger row: {after:?}");
+}
