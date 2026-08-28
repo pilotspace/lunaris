@@ -318,8 +318,41 @@ globset             = "0.4"
 # guard logic in the sentence splitter.
 unicode-segmentation = "1"
 
+# --- dev/test: tuned for disk, not for a debugger --------------------------
+# `cargo test --workspace` is the hot loop here, and its artifacts — not the
+# release ones — are where target/ actually goes. Measured 2026-08-28 with
+# `cargo build -p lunaris-storage-moon --lib` into three clean CARGO_TARGET_DIRs:
+#
+#   debug = 2 (cargo's default)  462 MB   615 loose .o (76 MB)   rlib 179 MB
+#   debug = "line-tables-only"   385 MB   615 loose .o (41 MB)   rlib 144 MB
+#   debug = 0                    319 MB     0 loose .o           rlib 124 MB
+#
+# On macOS the dev default is split-debuginfo = "unpacked", so full DWARF does
+# not just inflate the rlibs — it strands a loose .o per codegen unit next to
+# them (this repo's own target/debug held 14,036 of them, 1.26 GB, when the
+# above was measured). Workspace crates keep `line-tables-only` so panic
+# backtraces still resolve file:line, which is the only debuginfo any script
+# or CI job in this repo consumes; dependencies and build scripts get none,
+# and that is where the bulk sits. Step-debugging INTO a dependency needs a
+# one-off `CARGO_PROFILE_DEV_PACKAGE_*_DEBUG=2` (or a temporary edit here).
+#
+# The release profile is deliberately NOT tuned for disk: it is already at the
+# floor (debug = 0, strip = true, incremental off by default). Its deps dir is
+# ~72% rustc metadata — each rlib measured 80-87% `lib.rmeta`, and cargo's
+# pipelining stores that metadata a second time as a standalone .rmeta. Only
+# ~15% is LTO bitcode, and dropping `lto = "fat"` would substitute machine-code
+# objects for it, so it would cost runtime perf without reliably saving bytes.
 [profile.dev]
 opt-level = 0
+debug     = "line-tables-only"
+
+# Dependencies: no debuginfo at all. Applies to non-workspace packages only.
+[profile.dev.package."*"]
+debug = false
+
+# Build scripts and proc macros: never stepped through, never profiled.
+[profile.dev.build-override]
+debug = false
 
 # Max-performance release (mirrors ../moon's proven profile so cross-repo perf
 # stays comparable). Fat LTO + a single codegen unit trade compile time for
