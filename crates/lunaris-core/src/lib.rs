@@ -32,6 +32,7 @@ pub mod model_staging;
 pub mod retention;
 pub mod scope;
 pub mod snippet;
+pub mod sources;
 // Phase 23-01 — Scope derivation shared between lunaris-mcp and lunaris-hook.
 pub mod scope_resolver;
 pub mod storage;

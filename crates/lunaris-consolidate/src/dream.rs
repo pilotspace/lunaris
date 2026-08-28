@@ -231,6 +231,16 @@ pub async fn build_dream_agenda(
         if episode.source.starts_with("distilled:") {
             continue; // never re-distill a distilled record (§1 Must)
         }
+        if lunaris_core::sources::is_toolcall_capture(&episode.source) {
+            // Raw tool-call captures are substrate, not knowledge. The
+            // curation-gap ruling (2026-08-20, decision 1) demoted them
+            // explicitly — "you cannot summarize `ls -la` into wisdom" — and
+            // `lunaris-hook` has excluded them from context injection since
+            // W4.4. This is the same policy applied to the other consumer
+            // that treats an episode as knowledge; the predicate lives in
+            // `lunaris_core::sources` so the two cannot drift apart.
+            continue;
+        }
         let activation = record.activation(now, cfg.decay);
         if cfg.max_activation.is_some_and(|ceiling| activation > ceiling) {
             continue; // not ripe (decayed) enough yet
@@ -467,6 +477,15 @@ mod tests {
         storage.atomic_write(scope, &[WriteOp::KvPut { key, value }]).await.expect("seed write");
     }
 
+    /// Seed one episode.
+    ///
+    /// `source` is load-bearing: `distilled:*` and every
+    /// `lunaris_core::sources::is_toolcall_capture` kind are filtered out of
+    /// the agenda. Fixtures that just need "some raw source" must use a
+    /// NON-capture one (`lunaris:note` is the convention here) or the test
+    /// will assert on an agenda the planner deliberately emptied. Four tests
+    /// used `lunaris:tool_call:post` as that stand-in before the capture
+    /// filter landed and went red for exactly this reason.
     async fn seed_episode(
         storage: &Arc<dyn StoragePort>,
         scope: &Scope,
@@ -550,14 +569,7 @@ mod tests {
         let mut lunaris_ids = Vec::new();
         for i in 0..3u8 {
             let id = Ulid::new();
-            seed_episode(
-                &storage,
-                &scope,
-                id,
-                "lunaris:tool_call:post",
-                &format!("lunaris note {i}"),
-            )
-            .await;
+            seed_episode(&storage, &scope, id, "lunaris:note", &format!("lunaris note {i}")).await;
             seed_activation(&storage, &scope, id, &[(base - 10, Strength::Weak)]).await;
             lunaris_ids.push(id);
         }
@@ -788,7 +800,7 @@ mod tests {
         let mut ids: Vec<Ulid> = (0..24).map(|_| Ulid::new()).collect();
         ids.sort_unstable();
         for id in &ids {
-            seed_episode(&inner, &scope, *id, "lunaris:tool_call:post", "body").await;
+            seed_episode(&inner, &scope, *id, "lunaris:note", "body").await;
             seed_activation(&inner, &scope, *id, &[(now - 10, Strength::Weak)]).await;
         }
 
@@ -823,7 +835,7 @@ mod tests {
 
         let raw_id = Ulid::new();
         let distilled_id = Ulid::new();
-        seed_episode(&storage, &scope, raw_id, "lunaris:tool_call:post", "raw episode").await;
+        seed_episode(&storage, &scope, raw_id, "lunaris:note", "raw episode").await;
         seed_episode(
             &storage,
             &scope,
@@ -1034,9 +1046,8 @@ mod tests {
 
         let live_id = Ulid::new();
         let archived_id = Ulid::new();
-        seed_episode(&storage, &scope, live_id, "lunaris:tool_call:post", "live episode").await;
-        seed_episode(&storage, &scope, archived_id, "lunaris:tool_call:post", "archived episode")
-            .await;
+        seed_episode(&storage, &scope, live_id, "lunaris:note", "live episode").await;
+        seed_episode(&storage, &scope, archived_id, "lunaris:note", "archived episode").await;
         seed_activation(&storage, &scope, live_id, &[(base - 10, Strength::Weak)]).await;
 
         // Archived: apply a ref, then stamp archived_at directly (mirrors
@@ -1099,5 +1110,76 @@ mod tests {
         let after = key_count(&storage, &scope).await;
 
         assert_eq!(before, after, "build_dream_agenda must write nothing");
+    }
+
+    /// Raw tool-call captures must never reach the dream agenda.
+    ///
+    /// The planner's only source filter was `distilled:` — everything else
+    /// was a candidate, including the `lunaris:tool_call:*` envelopes the
+    /// hook writes on every single tool invocation. A census of the live
+    /// store measured 90.6% of 4,000 sampled episodes as exactly that, with
+    /// three curated entries (all from a test fixture). Un-filtered, the
+    /// first `/dream` after the activation-grain fix lands would hand a human
+    /// thousands of `PostToolUse` JSON blobs to judge.
+    ///
+    /// The curation-gap ruling (2026-08-20, decision 1) is the authority
+    /// here: capture knowledge directly, demote raw telemetry to substrate —
+    /// "you cannot summarize `ls -la` into wisdom".
+    ///
+    /// Both kinds are seeded with IDENTICAL activation, so nothing but the
+    /// source can separate them. The curated arm is asserted present, not
+    /// just the telemetry arm absent: "no telemetry" is also what a broken
+    /// seed or an empty scan looks like.
+    #[tokio::test]
+    async fn raw_toolcall_captures_are_never_dream_candidates() {
+        let (storage, _guard) = fresh_storage().await;
+        let scope = scope();
+        let base = unix_now();
+
+        let curated = Ulid::new();
+        let tool_post = Ulid::new();
+        let tool_pre = Ulid::new();
+        let injection = Ulid::new();
+
+        seed_episode(&storage, &scope, curated, "decision:relay", "we chose the amber relay").await;
+        seed_episode(&storage, &scope, tool_post, "lunaris:tool_call:post", "{\"tool\":\"Bash\"}")
+            .await;
+        seed_episode(&storage, &scope, tool_pre, "lunaris:tool_call:pre", "{\"tool\":\"Bash\"}")
+            .await;
+        // Hook bookkeeping shares the `lunaris:` prefix but is NOT a capture.
+        // Seeded so a prefix-match "fix" fails here instead of silently
+        // widening the exclusion.
+        seed_episode(&storage, &scope, injection, "lunaris:memory_injection", "injected").await;
+
+        for id in [curated, tool_post, tool_pre, injection] {
+            seed_activation(&storage, &scope, id, &[(base - 10, Strength::Weak)]).await;
+        }
+
+        let cfg = DreamConfig { limit: 20, min_cluster_size: 1, max_activation: None, decay: 0.5 };
+        let agenda = build_dream_agenda(storage.clone(), &scope, &cfg, unix_now()).await.unwrap();
+
+        let members: Vec<Ulid> =
+            agenda.clusters.iter().flat_map(|c| c.member_ids.iter().copied()).collect();
+
+        assert!(
+            members.contains(&curated),
+            "the curated decision must still be a candidate — without this, an \
+             empty agenda would satisfy the exclusion assertions below"
+        );
+        assert!(
+            !members.contains(&tool_post) && !members.contains(&tool_pre),
+            "a raw tool-call capture reached the dream agenda: {members:?}"
+        );
+        assert!(
+            members.contains(&injection),
+            "lunaris:memory_injection is hook bookkeeping, not a tool-call \
+             capture — excluding it means the filter matched on the `lunaris:` \
+             prefix instead of the capture literals"
+        );
+        assert_eq!(
+            agenda.total_candidates, 2,
+            "expected the curated episode + the injection record, got {}",
+            agenda.total_candidates
+        );
     }
 }
