@@ -2167,14 +2167,14 @@ fn excluded_context_source(source: &str) -> bool {
 
 /// True if `source` is a raw tool-call capture (as opposed to a durable
 /// decision/edit/prompt record). These envelopes are transient execution logs.
+///
+/// Delegates to `lunaris_core::sources` rather than carrying its own list.
+/// The dream planner needs the same answer (a capture is not distillable
+/// knowledge any more than it is injectable context), and two copies of a
+/// source list drift silently: a new capture kind added to one keeps flowing
+/// into whichever consumer still has the stale copy.
 fn is_toolcall_capture(source: &str) -> bool {
-    matches!(
-        source,
-        "lunaris:tool_call:pre"
-            | "lunaris:tool_call:post"
-            | "lunaris:pre_tool_use"
-            | "lunaris:post_tool_use"
-    )
+    lunaris_core::sources::is_toolcall_capture(source)
 }
 
 /// Whether a hit from `source` is eligible for context injection (W4.4).
