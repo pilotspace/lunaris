@@ -300,6 +300,35 @@ pub fn verify_agenda_prefix(scope: &Scope) -> Vec<u8> {
     format!("{}verify_agenda:", scope_prefix(scope)).into_bytes()
 }
 
+/// KV key for a scope's cached session digest: `lunaris:{scope}:digest_cache:v1`.
+///
+/// A per-scope SINGLETON, not a ULID-keyed record — the trailing `v1` is a
+/// payload-format version so a shape change can invalidate every cached entry
+/// by bumping it rather than migrating. Keeping the 4-segment
+/// `lunaris:{scope}:{kind}:{tail}` shape means `parse_scope_from_key` and the
+/// scope-prefix scans treat it like any other key.
+///
+/// The cache exists because building a digest costs a full `SCAN MATCH`
+/// keyspace walk per prefix: Moon's `MATCH` filters AFTER traversal, so the
+/// walk costs the same whether it matches one key or every key. Measured
+/// 2026-08-27 on a live 1.68M-key / 2.45GB store, one walk matching ZERO keys
+/// took 2.1s and the arm did three of them — ~25x over the hook's 400ms
+/// budget. (Cost tracks the store's total DATA volume, not its key count: a
+/// scratch store with the same key count but 231MB walked in 0.18s.)
+/// Reading THIS key is a single O(1) HMGET instead.
+///
+/// # Examples
+///
+/// ```
+/// use lunaris_core::{Scope, keyspace::digest_cache_key};
+/// let scope = Scope::new("_dev_").unwrap();
+/// assert_eq!(digest_cache_key(&scope), b"lunaris:_dev_:digest_cache:v1".to_vec());
+/// ```
+#[inline]
+pub fn digest_cache_key(scope: &Scope) -> Vec<u8> {
+    format!("{}digest_cache:v1", scope_prefix(scope)).into_bytes()
+}
+
 // ---------------------------------------------------------------------------
 // Reverse parse: extract a scope from a `lunaris:{scope}:{kind}:{ulid}` key
 // ---------------------------------------------------------------------------

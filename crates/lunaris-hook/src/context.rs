@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use tokio::sync::Mutex;
 
+use crate::digest_cache;
 use crate::embed_promotion::{self, EmbedPromotionConfig};
 use crate::scrub::ScrubEngine;
 
@@ -212,7 +213,7 @@ impl MemoryError {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ContextMemory {
     pub episode_id: String,
     pub source: String,
@@ -305,6 +306,11 @@ pub struct ContextService {
     /// `None` means there was no home directory to anchor to; the failure then
     /// degrades to the `tracing` line alone.
     capture_failure_log: Option<PathBuf>,
+    /// Scopes with a digest-cache rebuild already in flight — single-flight
+    /// guard. Without it, N concurrent stale hits each spawn a full rebuild,
+    /// and every rebuild is whole-store keyspace walks against the SAME
+    /// multiplexed connection (a stampede that would be slower than no cache).
+    digest_rebuilds: Arc<Mutex<HashSet<String>>>,
 }
 
 impl ContextService {
@@ -318,6 +324,7 @@ impl ContextService {
             embedder: Arc::new(tokio::sync::OnceCell::new()),
             reranker: Arc::new(tokio::sync::OnceCell::new()),
             capture_failure_log: crate::capture_failures::default_log_path(),
+            digest_rebuilds: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -575,6 +582,59 @@ impl ContextService {
                         return Ok(ContextResponse::empty());
                     }
                 };
+                let threshold = env_usize_any(&["LUNARIS_DREAM_NUDGE_THRESHOLD"])
+                    .unwrap_or(DEFAULT_DREAM_NUDGE_THRESHOLD);
+
+                // FAST PATH — a cached digest answers with a single O(1) key
+                // read. Building one costs a `SCAN MATCH` keyspace walk per
+                // prefix, and on Moon `MATCH` filters AFTER traversal, so the
+                // walk costs the same no matter how few keys match (measured
+                // 2026-08-27: 2.1s for a pattern matching ZERO keys on a live
+                // 1.68M-key / 2.45GB store; ~19s total for this arm). The hook
+                // adapter budgets 400ms and swallows the timeout, so the
+                // uncached path meant SessionStart injection never landed.
+                //
+                // An entry built for FEWER hits than asked is treated as a miss
+                // rather than silently under-serving.
+                let cached = digest_cache::read(storage.as_ref(), &scope)
+                    .await
+                    .filter(|entry| entry.satisfies(max_hits));
+
+                if let Some(entry) = cached {
+                    let mut memories = entry.memories.clone();
+                    memories.truncate(max_hits);
+                    if let Some(cwd) = cwd.clone() {
+                        self.spawn_agenda_sweep(&scope, cwd);
+                    }
+                    let mut resp = self
+                        .finish_recall(
+                            &scope,
+                            "session_start",
+                            session_id.as_deref(),
+                            max_chars,
+                            None,
+                            memories,
+                            cwd.as_deref(),
+                        )
+                        .await?;
+                    if threshold > 0 && entry.nudge_count >= threshold {
+                        splice_dream_nudge(&mut resp, entry.nudge_count);
+                    }
+                    // Stale-while-revalidate: the caller already has its
+                    // answer; refresh off the request path.
+                    if entry.is_stale(digest_cache::now_ms(), digest_cache::ttl_ms()) {
+                        self.spawn_digest_rebuild(&scope, prefixes.clone(), max_hits);
+                    }
+                    return Ok(resp);
+                }
+
+                // COLD PATH — behave exactly as the pre-cache implementation
+                // did (a miss must never blank the digest), then populate the
+                // cache so the NEXT session start takes the fast path. This
+                // still completes after the adapter's 400ms give-up:
+                // `contextd::handle_connection` spawns per connection and runs
+                // `handle()` to completion before writing, so a client that
+                // stopped reading cannot cancel the rebuild.
                 let memories =
                     match build_digest(storage.as_ref(), &scope, &prefixes, max_hits).await {
                         Ok(memories) => memories,
@@ -583,6 +643,40 @@ impl ContextService {
                             return Ok(ContextResponse::empty());
                         }
                     };
+
+                // engram-soul-loop task 9 (dream-skill nudge) — cheap,
+                // fail-open agenda-size check: NEVER errors the digest,
+                // NEVER empties an otherwise-populated response. See
+                // `.add/tasks/dream-skill/TASK.md` §3 CONTRACT (frozen).
+                // Hoisted above `finish_recall` so the SAME count can be
+                // cached; a scan failure still degrades to "no nudge".
+                let nudge_count = if threshold > 0 {
+                    match LedgerReferenceSource::new(storage.clone()).scan(&scope).await {
+                        Ok(refs) => Some(refs.iter().filter(|(_, r)| !r.is_archived()).count()),
+                        Err(err) => {
+                            tracing::debug!(
+                                err = %err,
+                                "session digest: dream nudge ledger scan failed, skipping nudge"
+                            );
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                digest_cache::write(
+                    &storage,
+                    &scope,
+                    &digest_cache::DigestCacheEntry {
+                        built_at_ms: digest_cache::now_ms(),
+                        memories: memories.clone(),
+                        nudge_count: nudge_count.unwrap_or(0),
+                        built_for_max_hits: max_hits,
+                    },
+                )
+                .await;
+
                 // engram-soul-loop task 6 (staleness-pass): after
                 // build_digest, sweep the scope's anchored episodes for
                 // staleness — fire-and-forget, never delays this response.
@@ -601,27 +695,10 @@ impl ContextService {
                     )
                     .await?;
 
-                // engram-soul-loop task 9 (dream-skill nudge) — cheap,
-                // fail-open agenda-size check: NEVER errors the digest,
-                // NEVER empties an otherwise-populated response. See
-                // `.add/tasks/dream-skill/TASK.md` §3 CONTRACT (frozen).
-                let threshold = env_usize_any(&["LUNARIS_DREAM_NUDGE_THRESHOLD"])
-                    .unwrap_or(DEFAULT_DREAM_NUDGE_THRESHOLD);
-                if threshold > 0 {
-                    match LedgerReferenceSource::new(storage.clone()).scan(&scope).await {
-                        Ok(refs) => {
-                            let n = refs.iter().filter(|(_, r)| !r.is_archived()).count();
-                            if n >= threshold {
-                                splice_dream_nudge(&mut resp, n);
-                            }
-                        }
-                        Err(err) => {
-                            tracing::debug!(
-                                err = %err,
-                                "session digest: dream nudge ledger scan failed, skipping nudge"
-                            );
-                        }
-                    }
+                if let Some(n) = nudge_count
+                    && n >= threshold
+                {
+                    splice_dream_nudge(&mut resp, n);
                 }
 
                 Ok(resp)
@@ -1404,6 +1481,69 @@ impl ContextService {
     /// spawned task; a handle-resolve failure degrades to "no sweep" (the
     /// same fail-open contract `staleness::sweep_and_upsert` itself keeps
     /// for every git/storage failure past this point).
+    /// Rebuild this scope's digest cache OFF the request path.
+    ///
+    /// Single-flight per scope: a rebuild performs the same whole-store keyspace
+    /// walks the cache exists to avoid, and every scope's walks share one
+    /// multiplexed connection, so letting concurrent stale hits stampede would
+    /// be worse than having no cache at all. A scope already rebuilding is a
+    /// no-op — the in-flight pass will publish a fresh entry regardless.
+    ///
+    /// Fail-open throughout: any error leaves the previous (stale but usable)
+    /// entry in place rather than poisoning it.
+    fn spawn_digest_rebuild(&self, scope: &Scope, prefixes: Vec<String>, max_hits: usize) {
+        let service = self.clone();
+        let scope = scope.clone();
+        tokio::spawn(async move {
+            {
+                let mut inflight = service.digest_rebuilds.lock().await;
+                if !inflight.insert(scope.as_str().to_owned()) {
+                    return;
+                }
+            }
+            service.rebuild_digest_cache(&scope, &prefixes, max_hits).await;
+            service.digest_rebuilds.lock().await.remove(scope.as_str());
+        });
+    }
+
+    /// The rebuild body. Separate from the spawn so a test can drive it
+    /// deterministically instead of racing a detached task.
+    async fn rebuild_digest_cache(&self, scope: &Scope, prefixes: &[String], max_hits: usize) {
+        let Ok(storage) = self.storage_for_scope(scope).await else {
+            tracing::debug!("digest cache rebuild: storage open failed");
+            return;
+        };
+        let memories = match build_digest(storage.as_ref(), scope, prefixes, max_hits).await {
+            Ok(m) => m,
+            Err(err) => {
+                tracing::debug!(err = %err, "digest cache rebuild: scan failed");
+                return;
+            }
+        };
+        let threshold =
+            env_usize_any(&["LUNARIS_DREAM_NUDGE_THRESHOLD"]).unwrap_or(DEFAULT_DREAM_NUDGE_THRESHOLD);
+        let nudge_count = if threshold > 0 {
+            LedgerReferenceSource::new(storage.clone())
+                .scan(scope)
+                .await
+                .map(|refs| refs.iter().filter(|(_, r)| !r.is_archived()).count())
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        digest_cache::write(
+            &storage,
+            scope,
+            &digest_cache::DigestCacheEntry {
+                built_at_ms: digest_cache::now_ms(),
+                memories,
+                nudge_count,
+                built_for_max_hits: max_hits,
+            },
+        )
+        .await;
+    }
+
     fn spawn_agenda_sweep(&self, scope: &Scope, cwd: PathBuf) {
         let service = self.clone();
         let scope = scope.clone();
@@ -5219,6 +5359,327 @@ mod tests {
         assert!(
             body.contains("LUNARIS_DREAM_PIGGYBACK"),
             "v2 session-end-piggyback trigger must be documented as an env-gated stub"
+        );
+    }
+
+    // ── digest cache: SessionStart must not pay a keyspace walk ───────────
+
+    /// `StoragePort` that COUNTS `scan_range` calls, delegating everything to
+    /// `inner`. The digest's cost is entirely in those walks (each is
+    /// walks the whole store because `SCAN MATCH` filters after traversal), so
+    /// "did the request path scan?" is the only honest measure of whether the
+    /// cache is actually wired in. Asserting on latency would be flaky;
+    /// asserting on the rendered text alone would pass even if the cache were
+    /// built and then ignored.
+    struct ScanCountingStorage {
+        inner: Arc<dyn StoragePort>,
+        scans: StdArc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl StoragePort for ScanCountingStorage {
+        async fn atomic_write(
+            &self,
+            scope: &Scope,
+            ops: &[lunaris_core::WriteOp],
+        ) -> Result<Lsn, lunaris_core::StorageError> {
+            self.inner.atomic_write(scope, ops).await
+        }
+
+        #[allow(clippy::too_many_arguments)]
+        async fn vector_search(
+            &self,
+            scope: &Scope,
+            index: &str,
+            query: &[f32],
+            k: usize,
+            filter: Option<&lunaris_core::Filter>,
+            as_of: Option<lunaris_core::Hlc>,
+            rerank: bool,
+        ) -> Result<Vec<lunaris_core::VectorHit>, lunaris_core::StorageError> {
+            self.inner.vector_search(scope, index, query, k, filter, as_of, rerank).await
+        }
+
+        async fn graph_traverse(
+            &self,
+            scope: &Scope,
+            query: &lunaris_core::CypherQuery,
+            as_of: Option<lunaris_core::Hlc>,
+        ) -> Result<lunaris_core::GraphResult, lunaris_core::StorageError> {
+            self.inner.graph_traverse(scope, query, as_of).await
+        }
+
+        async fn scan_range(
+            &self,
+            scope: &Scope,
+            prefix: &[u8],
+            as_of: Option<lunaris_core::Hlc>,
+        ) -> Result<
+            futures::stream::BoxStream<
+                '_,
+                Result<(bytes::Bytes, bytes::Bytes), lunaris_core::StorageError>,
+            >,
+            lunaris_core::StorageError,
+        > {
+            self.scans.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.inner.scan_range(scope, prefix, as_of).await
+        }
+
+        async fn read_as_of(
+            &self,
+            scope: &Scope,
+            key: &[u8],
+            as_of: lunaris_core::Hlc,
+        ) -> Result<Option<lunaris_core::Row<bytes::Bytes>>, lunaris_core::StorageError> {
+            self.inner.read_as_of(scope, key, as_of).await
+        }
+
+        async fn publish(
+            &self,
+            scope: &Scope,
+            topic: &str,
+            partition: u16,
+            payload: bytes::Bytes,
+        ) -> Result<u64, lunaris_core::StorageError> {
+            self.inner.publish(scope, topic, partition, payload).await
+        }
+
+        async fn subscribe(
+            &self,
+            scope: &Scope,
+            group: &str,
+            topic: &str,
+            partition: u16,
+        ) -> Result<
+            futures::stream::BoxStream<
+                'static,
+                Result<lunaris_core::QueueMsg, lunaris_core::StorageError>,
+            >,
+            lunaris_core::StorageError,
+        > {
+            self.inner.subscribe(scope, group, topic, partition).await
+        }
+
+        fn capabilities(&self) -> lunaris_core::StorageCapabilities {
+            self.inner.capabilities()
+        }
+
+        async fn lookup_by_dedupe_key(
+            &self,
+            scope: &Scope,
+            dedupe_key: &str,
+        ) -> Result<Option<Lsn>, lunaris_core::StorageError> {
+            self.inner.lookup_by_dedupe_key(scope, dedupe_key).await
+        }
+
+        async fn insert_dedupe_key(
+            &self,
+            scope: &Scope,
+            dedupe_key: &str,
+            lsn: Lsn,
+        ) -> Result<(), lunaris_core::StorageError> {
+            self.inner.insert_dedupe_key(scope, dedupe_key, lsn).await
+        }
+    }
+
+    /// Seed a cache entry directly, then assert the digest is served FROM it
+    /// with ZERO `scan_range` calls.
+    ///
+    /// This is the discriminating test for the whole feature: before the cache
+    /// was wired into the `SessionDigest` arm this fails with 2 scans (the
+    /// episode walk in `recent_by_source` + the activation walk for the dream
+    /// nudge), which on a live 1.7M-key Moon is the ~8s floor that put the
+    /// digest ~25x over the hook's 400ms budget.
+    #[tokio::test]
+    async fn session_digest_served_from_cache_performs_no_keyspace_scan() {
+        let scope = Scope::new("test-digest-cache-no-scan").unwrap();
+        // `_store` owns the ephemeral Moon child process and must stay bound
+        // for the test's lifetime (0.7.0 removed the `memory://` fallback).
+        let harness = open_test_storage().await;
+        let inner = harness.port();
+
+        // A real episode exists — so a cache MISS would have something to find,
+        // and "zero scans" cannot pass merely because the scope is empty.
+        seed_anchored_episode(
+            inner.as_ref(),
+            &scope,
+            "decision:cache-probe",
+            "this content must NOT be what the cached digest returns",
+            None,
+            None,
+        )
+        .await;
+
+        let scans = StdArc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counting =
+            StdArc::new(ScanCountingStorage { inner, scans: scans.clone() }) as Arc<dyn StoragePort>;
+
+        // Seed the cache with a DISTINCT payload, so the assertion proves the
+        // response came from the cache rather than from a live scan that
+        // happened to render similar text.
+        let cached = crate::digest_cache::DigestCacheEntry {
+            built_at_ms: crate::digest_cache::now_ms(),
+            memories: vec![ContextMemory {
+                episode_id: "01HZZZZZZZZZZZZZZZZZZZZZZZ".to_owned(),
+                source: "decision:from-cache".to_owned(),
+                score: 1.0,
+                snippet: "SERVED-FROM-CACHE-SENTINEL".to_owned(),
+                stale: false,
+            }],
+            nudge_count: 0,
+            built_for_max_hits: 64,
+        };
+        crate::digest_cache::write(&counting, &scope, &cached).await;
+        scans.store(0, std::sync::atomic::Ordering::SeqCst);
+
+        let svc = ContextService::new();
+        svc.insert_storage_for_test(&scope, counting.clone()).await;
+
+        let resp = svc
+            .handle(ContextRequest::SessionDigest {
+                cwd: None,
+                scope: Some(scope.as_str().to_owned()),
+                session_id: None,
+                max_hits: None,
+                max_chars: None,
+                source_prefixes: None,
+            })
+            .await;
+
+        assert!(resp.ok, "digest must succeed: {:?}", resp.error);
+        assert!(
+            resp.rendered_context.contains("SERVED-FROM-CACHE-SENTINEL"),
+            "digest must be served from the cached entry, got: {}",
+            resp.rendered_context
+        );
+        assert_eq!(
+            scans.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "a cache HIT must perform ZERO keyspace scans — on Moon each one walks \
+             the whole store regardless of how few keys match"
+        );
+    }
+
+    /// A cold cache must behave EXACTLY as it did before the cache existed:
+    /// the digest still returns the scope's real memories. The cache is an
+    /// optimization, never a gate — a miss must not blank the digest.
+    #[tokio::test]
+    async fn session_digest_cache_miss_still_serves_the_real_digest() {
+        let scope = Scope::new("test-digest-cache-cold").unwrap();
+        let harness = open_test_storage().await;
+        let storage = harness.port();
+        seed_anchored_episode(
+            storage.as_ref(),
+            &scope,
+            "decision:cold-cache",
+            "content that a cold cache must still surface",
+            None,
+            None,
+        )
+        .await;
+
+        let svc = ContextService::new();
+        svc.insert_storage_for_test(&scope, storage.clone()).await;
+
+        let resp = svc
+            .handle(ContextRequest::SessionDigest {
+                cwd: None,
+                scope: Some(scope.as_str().to_owned()),
+                session_id: None,
+                max_hits: None,
+                max_chars: None,
+                source_prefixes: None,
+            })
+            .await;
+
+        assert!(resp.ok, "digest must succeed on a cold cache: {:?}", resp.error);
+        assert!(
+            resp.rendered_context.contains("content that a cold cache must still surface"),
+            "a cache MISS must fall back to the real digest, got: {}",
+            resp.rendered_context
+        );
+    }
+
+    /// Live-Moon A/B for the digest cache. `#[ignore]`d: it needs a REAL Moon,
+    /// and the cost being removed only shows up on a store with real data.
+    ///
+    /// Run against a SCRATCH Moon only:
+    ///   LUNARIS_DIGEST_AB_MOON=moon://127.0.0.1:6402 \
+    ///     cargo test -p lunaris-hook --lib digest_cache_ab -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore = "needs a live scratch Moon; set LUNARIS_DIGEST_AB_MOON"]
+    async fn digest_cache_ab_against_live_moon() {
+        let url = std::env::var("LUNARIS_DIGEST_AB_MOON")
+            .expect("set LUNARIS_DIGEST_AB_MOON=moon://127.0.0.1:<scratch-port>");
+        // Ports that hold real data on a dev box. Refuse them outright rather
+        // than trusting whoever runs this to pass the right URL: 6381 is the
+        // live personal store and this test WRITES.
+        for bad in [":6379", ":6380", ":6381", ":6399"] {
+            assert!(
+                !url.contains(bad),
+                "refusing to run against {bad} — that port holds real data; use a scratch Moon"
+            );
+        }
+
+        let storage = lunaris::open(&url).await.expect("open scratch moon");
+        // Fresh scope per run, so a previous run's cached entry can never be
+        // what makes the "warm" number look good.
+        let scope = Scope::new(format!("digest-ab-{}", ulid::Ulid::new())).unwrap();
+        let clock = HlcClock::new(0);
+
+        let n: usize = std::env::var("LUNARIS_DIGEST_AB_EPISODES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(200);
+        for i in 0..n {
+            let ep = Episode::new(
+                scope.clone(),
+                "decision:ab",
+                format!("decision {i}: cap the extractor retry budget at 3"),
+                &clock,
+            );
+            let key = lunaris_core::keyspace::episode_key(&scope, ep.id);
+            let value = serde_json::to_vec(&ep).unwrap();
+            storage
+                .atomic_write(&scope, &[lunaris_core::WriteOp::KvPut { key, value }])
+                .await
+                .expect("seed write");
+        }
+
+        let svc = ContextService::new();
+        svc.insert_storage_for_test(&scope, storage.clone()).await;
+
+        let req = || ContextRequest::SessionDigest {
+            cwd: None,
+            scope: Some(scope.as_str().to_owned()),
+            session_id: None,
+            max_hits: None,
+            max_chars: None,
+            source_prefixes: None,
+        };
+
+        let t0 = std::time::Instant::now();
+        let cold = svc.handle(req()).await;
+        let cold_ms = t0.elapsed().as_millis();
+        assert!(cold.ok, "cold digest must succeed: {:?}", cold.error);
+
+        let t1 = std::time::Instant::now();
+        let warm = svc.handle(req()).await;
+        let warm_ms = t1.elapsed().as_millis();
+        assert!(warm.ok, "warm digest must succeed: {:?}", warm.error);
+
+        println!("\n=== digest cache A/B ({url}, {n} episodes, scope {}) ===", scope.as_str());
+        println!("  cold (walks + hydrates + caches): {cold_ms} ms");
+        println!("  warm (single point-read):         {warm_ms} ms");
+
+        assert!(
+            !warm.rendered_context.is_empty(),
+            "the warm digest must still return content, not an empty response"
+        );
+        assert_eq!(
+            cold.rendered_context, warm.rendered_context,
+            "the cached digest must be IDENTICAL to the freshly-built one — a cache \
+             that changes the answer is a bug, not an optimization"
         );
     }
 }
