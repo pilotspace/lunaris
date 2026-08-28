@@ -202,7 +202,8 @@ mod tests {
     #[test]
     fn payload_round_trips_and_tolerates_missing_optional_fields() {
         let e = entry(42, 7);
-        let back: DigestCacheEntry = serde_json::from_slice(&serde_json::to_vec(&e).unwrap()).unwrap();
+        let back: DigestCacheEntry =
+            serde_json::from_slice(&serde_json::to_vec(&e).unwrap()).unwrap();
         assert_eq!(back.built_at_ms, 42);
         assert_eq!(back.built_for_max_hits, 7);
 
