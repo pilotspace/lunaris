@@ -221,6 +221,25 @@ jobs:
             exit 1
           fi
 
+      # DREAM-01 invariant — the dream-agenda planner never writes.
+      #
+      # `build_dream_agenda` SURFACES candidate clusters; the agent writes the
+      # distilled episode via the `memory.distill` MCP tool. A write appearing
+      # in the planner would move agent-owned curation into the engine and
+      # give a read path silent side effects.
+      #
+      # The module documented this as "`grep -c atomic_write` MUST be 0", which
+      # no file containing that sentence can satisfy — the prose describing the
+      # rule matches it. So the rule shipped UNGUARDED: before this step,
+      # `grep -rn dream.rs .github/ scripts/ ci/ xtask/` returned nothing. The
+      # script counts real call sites (comments stripped, test module excluded)
+      # and is mutation-checked against a plain write, a write hidden behind a
+      # trailing comment, and a legitimate write inside the test module.
+      #
+      # Security: reads a repo-local path only; no untrusted input.
+      - name: dream_01_planner_is_read_only
+        run: python3 scripts/check-dream-readonly.py
+
       # W1.1 — ignored-test ratchet.
       #
       # `uat4_forget_honors_scope_target_contract` was parked behind

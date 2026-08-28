@@ -4,8 +4,15 @@
 //! **READ-ONLY.** Tin's locked decision: the coding harness (Claude, not
 //! Lunaris) is the distiller/judge. This module only SURFACES candidate
 //! clusters of ripe raw episodes with activation stats — it never writes an
-//! episode, a ledger row, or an agenda row. `grep -c atomic_write` on this
-//! file MUST be `0` (task 8a §6 VERIFY).
+//! episode, a ledger row, or an agenda row (task 8a §6 VERIFY).
+//!
+//! Enforced by `scripts/check-dream-readonly.py` (DREAM-01, run in
+//! ci.yml). The rule used to be stated here as "`grep -c atomic_write`
+//! on this file MUST be `0`" — which no file containing that sentence
+//! can ever satisfy, since the prose describing the rule matches it.
+//! The guard counts real `.atomic_write(` call sites instead: comments
+//! stripped, test module excluded (the mock `impl StoragePort` there
+//! legitimately defines and calls one).
 //!
 //! ## Pipeline
 //!
