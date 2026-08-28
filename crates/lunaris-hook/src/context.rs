@@ -1520,8 +1520,8 @@ impl ContextService {
                 return;
             }
         };
-        let threshold =
-            env_usize_any(&["LUNARIS_DREAM_NUDGE_THRESHOLD"]).unwrap_or(DEFAULT_DREAM_NUDGE_THRESHOLD);
+        let threshold = env_usize_any(&["LUNARIS_DREAM_NUDGE_THRESHOLD"])
+            .unwrap_or(DEFAULT_DREAM_NUDGE_THRESHOLD);
         let nudge_count = if threshold > 0 {
             LedgerReferenceSource::new(storage.clone())
                 .scan(scope)
@@ -5511,8 +5511,8 @@ mod tests {
         .await;
 
         let scans = StdArc::new(std::sync::atomic::AtomicUsize::new(0));
-        let counting =
-            StdArc::new(ScanCountingStorage { inner, scans: scans.clone() }) as Arc<dyn StoragePort>;
+        let counting = StdArc::new(ScanCountingStorage { inner, scans: scans.clone() })
+            as Arc<dyn StoragePort>;
 
         // Seed the cache with a DISTINCT payload, so the assertion proves the
         // response came from the cache rather than from a live scan that
