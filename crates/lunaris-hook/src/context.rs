@@ -909,7 +909,7 @@ impl ContextService {
                         .into_iter()
                         .filter(|h| injectable_source(&h.source, include_toolcalls))
                         .map(|h| ContextMemory {
-                            episode_id: ulid_bytes_to_string(&h.id),
+                            episode_id: hit_ledger_id(&h),
                             stale: false,
                             source: h.source,
                             score: h.score,
@@ -962,7 +962,7 @@ impl ContextService {
             .filter(|h| h.score >= min_score)
             .filter(|h| injectable_source(&h.source, include_toolcalls))
             .map(|h| ContextMemory {
-                episode_id: ulid_bytes_to_string(&h.id),
+                episode_id: hit_ledger_id(&h),
                 stale: false,
                 source: h.source,
                 score: h.score,
@@ -982,7 +982,7 @@ impl ContextService {
                     .filter(|h| h.score >= min_score)
                     .filter(|h| injectable_source(&h.source, include_toolcalls))
                     .map(|h| ContextMemory {
-                        episode_id: ulid_bytes_to_string(&h.id),
+                        episode_id: hit_ledger_id(&h),
                         stale: false,
                         source: h.source,
                         score: h.score,
@@ -1031,7 +1031,7 @@ impl ContextService {
                 .filter(|h| h.score >= min_score)
                 .filter(|h| injectable_source(&h.source, include_toolcalls))
                 .map(|h| ContextMemory {
-                    episode_id: ulid_bytes_to_string(&h.id),
+                    episode_id: hit_ledger_id(&h),
                     stale: false,
                     source: h.source,
                     score: h.score,
@@ -1154,16 +1154,13 @@ impl ContextService {
         let clock = HlcClock::new(0);
         let read_at = clock.tick();
 
-        // Bounded point-reads: one per curated memory in the common case
-        // (≤ max_hits), rising to two for hot-path candidates whose
-        // `ContextMemory.episode_id` is actually the underlying CHUNK's own
-        // ulid (see `recall_and_trace`'s `h.id`-based candidate mapping —
-        // pre-existing, out of this task's scope to rename). We try the
-        // direct episode read first (covers `build_digest`-sourced entries,
-        // which stamp the real `Episode::id`); only on a miss do we fall
-        // back to a chunk read to recover the true parent `episode_id` and
-        // re-resolve. Flagged as a deviation from the contract's literal
-        // "one read per memory" framing in the task report.
+        // Bounded point-reads: one per curated memory. Recall candidates now
+        // carry the PARENT EPISODE ulid (`hit_ledger_id`, episode-grain ledger
+        // contract), so the direct episode read hits on the first try for both
+        // recall- and `build_digest`-sourced entries. The chunk fallback below
+        // is retained for rows that predate the fix — written when this field
+        // really did hold `h.id` — and for any future path that supplies a
+        // chunk ulid; it costs a second read only on an episode miss.
         let mut metas: Vec<Option<Map<String, Value>>> = Vec::with_capacity(memories.len());
         for memory in &memories {
             let meta = match ulid::Ulid::from_string(&memory.episode_id) {
@@ -2313,6 +2310,21 @@ fn ulid_bytes_to_string(bytes: &[u8]) -> String {
         .unwrap_or_default()
 }
 
+/// The ledger id for a recall hit — see the **episode-grain ledger contract**
+/// in `lunaris_retrieve::builder` (2026-07-19): the activation ledger is keyed
+/// by PARENT EPISODE id, the same id space `memory.feedback` writes and
+/// dream-agenda hydration reads.
+///
+/// `Hit.id` is the CHUNK ulid; `Hit.episode_id` is its parent, populated during
+/// `hydrate::hydrate` and `#[serde(skip)]`-ed as an in-process provenance
+/// channel. Fall back to the raw hit id for hits produced outside the main
+/// hydration path (fact hits), where `episode_id` is empty — the same
+/// selection `builder::ledger_id` makes.
+fn hit_ledger_id(hit: &lunaris_retrieve::Hit) -> String {
+    let bytes = if hit.episode_id.is_empty() { &hit.id } else { &hit.episode_id };
+    ulid_bytes_to_string(bytes)
+}
+
 fn env_usize_any(names: &[&str]) -> Option<usize> {
     names.iter().find_map(|name| std::env::var(name).ok()?.parse::<usize>().ok())
 }
@@ -3335,6 +3347,69 @@ mod tests {
 
     // ── ADD task activation-ledger — scenario 7: hook injection emits weak
     //    refs on the production path ─────────────────────────────────────
+
+    /// **Episode-grain ledger contract** (`lunaris_retrieve::builder`,
+    /// 2026-07-19): the activation ledger is keyed by PARENT EPISODE id.
+    ///
+    /// `Hit.id` is the CHUNK ulid; `Hit.episode_id` is its parent. Recall
+    /// results flow into `ContextMemory.episode_id`, and from there into
+    /// `record_activation_refs` — so taking `hit.id` here writes a
+    /// CHUNK-keyed ledger that `build_dream_agenda` (which hydrates
+    /// `episode_key`) can never resolve, and that the activation prior in
+    /// `builder::ledger_id` (which reads episode-grain) can never hit.
+    ///
+    /// Measured on live Moon 6381 before the fix: 3/3 sampled activation keys
+    /// existed as `chunk:{ulid}` and NOT as `episode:{ulid}`; 400/400 hydrated
+    /// ledger ids had no episode. `/dream` reported "1118 memories ripe" while
+    /// its candidate set was structurally empty.
+    #[test]
+    fn hit_ledger_id_is_the_parent_episode_not_the_chunk() {
+        let chunk = ulid::Ulid::new();
+        let episode = ulid::Ulid::new();
+        assert_ne!(chunk, episode, "the two ids must differ or this asserts nothing");
+
+        let hit = lunaris_retrieve::Hit {
+            id: chunk.to_bytes().to_vec(),
+            episode_id: episode.to_bytes().to_vec(),
+            score: 0.9,
+            text: "body".into(),
+            source: "decision:x".into(),
+            heading_path: vec![],
+            valid_from: lunaris_core::Hlc::from_parts(0, 0, 0),
+            valid_to: None,
+            degraded: false,
+            rerank_applied: false,
+            source_op: lunaris_retrieve::SourceOp::Vector,
+        };
+
+        assert_eq!(
+            hit_ledger_id(&hit),
+            episode.to_string(),
+            "ledger id must be the PARENT EPISODE ulid, not the chunk ulid"
+        );
+    }
+
+    /// Fall back to the raw hit id when there is no provenance channel — fact
+    /// hits and non-hydrated paths leave `episode_id` empty, and those must
+    /// still key the ledger by something rather than by "".
+    #[test]
+    fn hit_ledger_id_falls_back_to_the_hit_id_when_unhydrated() {
+        let raw = ulid::Ulid::new();
+        let hit = lunaris_retrieve::Hit {
+            id: raw.to_bytes().to_vec(),
+            episode_id: Vec::new(),
+            score: 0.5,
+            text: "fact".into(),
+            source: "fact:y".into(),
+            heading_path: vec![],
+            valid_from: lunaris_core::Hlc::from_parts(0, 0, 0),
+            valid_to: None,
+            degraded: false,
+            rerank_applied: false,
+            source_op: lunaris_retrieve::SourceOp::Vector,
+        };
+        assert_eq!(hit_ledger_id(&hit), raw.to_string());
+    }
 
     /// `trace_injection` must, after its `lunaris:memory_injection` capture
     /// succeeds, emit a weak turn-grain activation ref for every injected
