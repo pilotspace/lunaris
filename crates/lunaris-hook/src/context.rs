@@ -3411,6 +3411,125 @@ mod tests {
         assert_eq!(hit_ledger_id(&hit), raw.to_string());
     }
 
+    /// END-TO-END: a real recall must leave an activation ledger that
+    /// `build_dream_agenda` can actually hydrate.
+    ///
+    /// The two halves of this chain were each unit-tested and still composed
+    /// into nothing. `ContextMemory.episode_id` was filled from `Hit.id` (the
+    /// CHUNK ulid), so the ledger was chunk-keyed, while `build_dream_agenda`
+    /// hydrates `episode_key` and dropped every candidate as "episode gone".
+    /// On live Moon 6381 that produced a scope advertising 1118 ripe memories
+    /// with a structurally empty agenda.
+    ///
+    /// So this drives the PRODUCTION dispatch — `RecallForPrompt` ->
+    /// `recall_and_trace` -> `spawn_trace_injection` -> `record_activation_refs`
+    /// — and then runs the real planner over the same store. It asserts the
+    /// grain directly (every ledger id resolves to an EPISODE, not a chunk)
+    /// AND that the planner yields candidates, because the first can hold
+    /// while the second still fails.
+    #[tokio::test]
+    async fn recall_writes_episode_grain_refs_that_dream_can_hydrate() {
+        use futures::StreamExt;
+
+        let (svc, scope, _store) = service_with_seeded_scope("test-dream-chain").await;
+        let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
+        svc.insert_storage_for_test(&scope, handle.storage()).await;
+        let storage = handle.storage();
+
+        let text = "granite embedder resolves llamacpp end to end";
+        let ingest = svc
+            .handle_memory(MemoryRequest::Ingest {
+                scope: scope.as_str().to_owned(),
+                params: lunaris_memory_service::ingest::IngestParams {
+                    source: "decision:dream-chain".to_owned(),
+                    content: text.to_owned(),
+                    t_ref: None,
+                    metadata: None,
+                    dedupe_key: None,
+                },
+            })
+            .await;
+        assert!(matches!(ingest, MemoryResponse::Ok { .. }), "seed ingest failed: {ingest:?}");
+
+        let resp = svc
+            .handle(ContextRequest::RecallForPrompt {
+                cwd: None,
+                scope: Some(scope.as_str().to_owned()),
+                session_id: Some("sess-dream-chain".to_owned()),
+                prompt: text.to_owned(),
+                max_hits: Some(5),
+                max_chars: None,
+                min_score: Some(0.0),
+            })
+            .await;
+        assert!(resp.ok, "recall must succeed: {:?}", resp.error);
+        assert!(!resp.memories.is_empty(), "recall must return the seeded memory");
+
+        // `trace_injection` is SPAWNED off the request path, so poll rather
+        // than assume it has landed.
+        let prefix = lunaris_core::keyspace::activation_prefix(&scope);
+        let mut ledger_ids: Vec<ulid::Ulid> = Vec::new();
+        for _ in 0..60 {
+            let mut stream = storage
+                .scan_range(&scope, &prefix, None)
+                .await
+                .expect("activation scan must not error");
+            let mut found = Vec::new();
+            while let Some(item) = stream.next().await {
+                let (key, _) = item.expect("ledger row read must not error");
+                let k = String::from_utf8_lossy(&key).to_string();
+                if let Some(seg) = k.rsplit(':').next()
+                    && let Ok(id) = ulid::Ulid::from_string(seg)
+                {
+                    found.push(id);
+                }
+            }
+            drop(stream);
+            if !found.is_empty() {
+                ledger_ids = found;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert!(!ledger_ids.is_empty(), "a real recall must write at least one activation ref");
+
+        // GRAIN: every ledger id must be an EPISODE. Before the fix these were
+        // chunk ulids, and this read came back None for every one of them.
+        let clock = HlcClock::new(0);
+        for id in &ledger_ids {
+            let row = storage
+                .read_as_of(&scope, &lunaris_core::keyspace::episode_key(&scope, *id), clock.tick())
+                .await
+                .expect("episode read must not error");
+            assert!(
+                row.is_some(),
+                "ledger id {id} must resolve to an EPISODE; None means the ledger \
+                 is chunk-keyed again and dream will drop it as \"episode gone\""
+            );
+        }
+
+        // COMPOSITION: the planner must actually surface candidates.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock before epoch")
+            .as_secs();
+        let cfg = lunaris_consolidate::DreamConfig {
+            limit: 20,
+            min_cluster_size: 1,
+            max_activation: None,
+            decay: 0.5,
+        };
+        let agenda = lunaris_consolidate::build_dream_agenda(storage.clone(), &scope, &cfg, now)
+            .await
+            .expect("dream agenda must build");
+        assert!(
+            agenda.total_candidates > 0,
+            "the planner must surface the recalled episode; got 0 candidates from \
+             {} ledger ref(s) — the chain is broken again",
+            ledger_ids.len()
+        );
+    }
+
     /// `trace_injection` must, after its `lunaris:memory_injection` capture
     /// succeeds, emit a weak turn-grain activation ref for every injected
     /// memory id via the engine's `record_activation_refs`. Uses
