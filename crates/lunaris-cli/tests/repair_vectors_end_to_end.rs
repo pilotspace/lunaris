@@ -84,6 +84,16 @@ fn run_cli(url: &str, scope: &str, extra: &[&str]) -> std::process::Output {
         // this rather than writing a discovery file keeps the test from
         // depending on — or disturbing — anything under ~/.lunaris.
         .env("LUNARIS_STORE_URL", url)
+        // ...except that LUNARIS_STORE_URL alone does NOT keep it off a real
+        // store. `route.rs` is socket-FIRST: with a reachable contextd the
+        // call is served by the daemon, which resolved its own store long ago,
+        // and the URL above is never consulted. Measured 2026-09-01 on a
+        // machine running contextd: the preview reported `scanned=0` and
+        // printed `(via contextd)` — it had walked the developer's live store,
+        // not the ephemeral Moon this test seeded. Pointing the socket at a
+        // path that cannot exist forces the direct leg, which is what the
+        // module doc above claims this test exercises.
+        .env("LUNARIS_CONTEXTD_SOCKET", "/nonexistent/repair-vectors-e2e.sock")
         .env_remove("LUNARIS_SCOPE");
     cmd.output().expect("the lunaris binary must be runnable")
 }

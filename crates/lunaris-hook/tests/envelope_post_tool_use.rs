@@ -23,6 +23,9 @@ async fn post_tool_use_exits_0() {
     let store = open_test_store().await;
     let mut child = Command::new(env!("CARGO_BIN_EXE_lunaris-hook"))
         .env("LUNARIS_STORE_URL", store.url())
+        // Socket-first routing outranks the store named above: a reachable
+        // contextd would serve this from ITS store, silently. Force the direct leg.
+        .env("LUNARIS_CONTEXTD_SOCKET", "/nonexistent/lunaris-test.sock")
         .env("LUNARIS_HOOK_SCOPE", "post-tool-use-test")
         .env("LUNARIS_SCOPES_FILE", scopes_json.to_str().unwrap())
         .env("LUNARIS_HOOK_LOG", "error")

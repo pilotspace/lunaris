@@ -15,6 +15,9 @@ async fn invalid_json_exits_64() {
     let store = open_test_store().await;
     let mut child = Command::new(env!("CARGO_BIN_EXE_lunaris-hook"))
         .env("LUNARIS_STORE_URL", store.url())
+        // Socket-first routing outranks the store named above: a reachable
+        // contextd would serve this from ITS store, silently. Force the direct leg.
+        .env("LUNARIS_CONTEXTD_SOCKET", "/nonexistent/lunaris-test.sock")
         .env("LUNARIS_HOOK_SCOPE", "malformed-test")
         .env("LUNARIS_SCOPES_FILE", scopes_json.to_str().unwrap())
         .env("LUNARIS_HOOK_LOG", "error")
@@ -42,6 +45,9 @@ async fn missing_hook_event_name_exits_64() {
     let store = open_test_store().await;
     let mut child = Command::new(env!("CARGO_BIN_EXE_lunaris-hook"))
         .env("LUNARIS_STORE_URL", store.url())
+        // Socket-first routing outranks the store named above: a reachable
+        // contextd would serve this from ITS store, silently. Force the direct leg.
+        .env("LUNARIS_CONTEXTD_SOCKET", "/nonexistent/lunaris-test.sock")
         .env("LUNARIS_HOOK_SCOPE", "malformed-test-2")
         .env("LUNARIS_SCOPES_FILE", scopes_json.to_str().unwrap())
         .env("LUNARIS_HOOK_LOG", "error")

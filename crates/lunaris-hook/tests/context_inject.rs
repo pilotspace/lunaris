@@ -53,6 +53,9 @@ async fn run_hook(
 ) -> std::process::Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_lunaris-hook"))
         .env("LUNARIS_STORE_URL", store_url)
+        // Socket-first routing outranks the store named above: a reachable
+        // contextd would serve this from ITS store, silently. Force the direct leg.
+        .env("LUNARIS_CONTEXTD_SOCKET", "/nonexistent/lunaris-test.sock")
         .env("LUNARIS_HOOK_SCOPE", SCOPE)
         .env("LUNARIS_SCOPES_FILE", scopes.to_str().unwrap())
         .env("LUNARIS_SESSIONS_FILE", sessions.to_str().unwrap())
