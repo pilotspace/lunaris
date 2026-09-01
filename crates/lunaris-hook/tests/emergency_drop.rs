@@ -73,6 +73,9 @@ fn make_timed_cmd(store_url: &str) -> Command {
     cmd.env("LUNARIS_HOOK_DROP_AFTER_MS", DROP_AFTER_MS.to_string())
         .env("LUNARIS_TEST_STALL_MS", STALL_MS.to_string())
         .env("LUNARIS_STORE_URL", store_url)
+        // Socket-first routing outranks the store named above: a reachable
+        // contextd would serve this from ITS store, silently. Force the direct leg.
+        .env("LUNARIS_CONTEXTD_SOCKET", "/nonexistent/lunaris-test.sock")
         .env("LUNARIS_HOOK_SCOPE", "emergency-drop-test")
         .env("LUNARIS_HOOK_LOG", "warn")
         // Non-existent path → fast NoopEmbedder/NoopReranker fallback (no mmap).
@@ -91,6 +94,9 @@ fn make_capture_cmd(store_url: &str) -> std::process::Command {
     cmd.env("LUNARIS_HOOK_DROP_AFTER_MS", DROP_AFTER_MS.to_string())
         .env("LUNARIS_TEST_STALL_MS", STALL_MS.to_string())
         .env("LUNARIS_STORE_URL", store_url)
+        // Socket-first routing outranks the store named above: a reachable
+        // contextd would serve this from ITS store, silently. Force the direct leg.
+        .env("LUNARIS_CONTEXTD_SOCKET", "/nonexistent/lunaris-test.sock")
         .env("LUNARIS_HOOK_SCOPE", "emergency-drop-test")
         .env("LUNARIS_HOOK_LOG", "warn")
         .env("LUNARIS_EMBEDDER_DIR", "/dev/null/weights")

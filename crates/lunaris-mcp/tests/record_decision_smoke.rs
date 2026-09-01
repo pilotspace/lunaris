@@ -91,6 +91,14 @@ async fn record_decision_smoke() {
     let mut child = Command::new(&bin)
         .env("LUNARIS_MCP_SCOPE", "test-record-decision")
         .env("LUNARIS_MCP_STORAGE", &storage)
+        // Hermetic against a developer's live contextd: proxy.rs resolves
+        // LUNARIS_CONTEXTD_SOCKET (default $HOME/.lunaris/codex-contextd.sock)
+        // AHEAD of the explicit storage above, and a reachable daemon would
+        // serve this write from ITS store instead of the test's Moon. Measured
+        // 2026-09-01: without this, the live store held 50+ keys under
+        // `test-record-decision` / `test-record-edit`, and those rows were the
+        // only "curated" memories a production census could find.
+        .env("LUNARIS_MCP_DISABLE_CONTEXTD", "1")
         // Skip embedder health probe — ingest-only test, no recall exercised.
         // Without this, bootstrap rejects NoopEmbedder and the server exits
         // before responding (mcp-recall-empty-hits fix; see state.rs).

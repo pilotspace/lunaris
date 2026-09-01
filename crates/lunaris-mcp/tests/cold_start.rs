@@ -166,6 +166,9 @@ async fn cold_start_under_500ms_no_gguf_staged() {
             // Ephemeral disposable storage — no developer-cache I/O, no
             // SQLite migrations (0.7.0 port off `memory://`).
             .env("LUNARIS_MCP_STORAGE", store_url.as_str())
+            // Socket-first routing outranks the store named above: a reachable
+            // contextd would serve this from ITS store, silently. Force the direct leg.
+            .env("LUNARIS_CONTEXTD_SOCKET", "/nonexistent/lunaris-test.sock")
             // Scope override — skips git-remote derivation (filesystem I/O).
             .env("LUNARIS_MCP_SCOPE", "cold-start-test")
             // Redirect GGUF stager away from ~/.lunaris/models/ so the lazy
