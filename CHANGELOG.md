@@ -5,6 +5,65 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-09-01
+
+### Upgrade notes — 0.8.0 → 0.8.1
+
+No wire-format change, no data migration, no schema version bump. Rolling back
+to the 0.8.0 binary on the same Moon store is supported in place
+(`scripts/release/moon-inplace-rollback-drill.sh`).
+
+The vendored Moon submodule moves from `d70bebbd` (v0.8.5 + 32 commits) to tag
+**v0.8.7**. `MIN_MOON_VERSION` deliberately stays at **0.8.5**: v0.8.7 brings no
+server capability Lunaris *requires*, and a pin bump alone is not a reason to
+lock operators out of a still-sufficient server. The vendored `moondb` SDK
+source is **byte-identical** across that range — `git diff d70bebbd v0.8.7 --
+sdk/rust` is empty — so the published `moondb` 0.3.0 is unchanged and
+`scripts/check-vendored-moondb-parity.sh` still reports byte-identical.
+
+Two upstream fixes are worth naming for anyone running a Lunaris store:
+GraphUnion segment merges were rejected forever on any index carrying duplicate
+vectors (0.8.6), and retiring a vector document from the payload index was
+quadratic in the field's cardinality (0.8.7).
+
+**Not** included: moon#719 (Cypher writes narrow through the property index
+instead of scanning every node of the label — the INGEST-06 root cause). That
+landed in Moon 0.8.8, which is unpublished at the time of this release.
+
+### Fixed
+
+- **The activation ledger recorded references at chunk grain, so almost nothing
+  it pointed at could be hydrated.** `RecallForPrompt` wrote ledger ids taken
+  from retrieval hits, which are chunk ids; every consumer resolves an id
+  through `episode_key`. Measured on the production store before the fix:
+  **18,471 activation rows, 5 of which resolve to an episode.** The
+  user-visible symptom was the SessionStart nudge counting ~3,700x more ripe
+  memories than `/dream` could hydrate.
+- **`forget` never retired the activation-ledger rows of what it forgot.** A
+  soft forget left the ledger row live and a hard forget orphaned it
+  permanently, so a deleted memory kept accruing recall weight. Ledger ops now
+  extend the *existing* `WriteOp` vector — the D-19 one-`atomic_write`-per-call
+  invariant is preserved — and a dry run still writes nothing.
+- **`build_dream_agenda` offered raw tool-call telemetry as distillation
+  candidates.** It filtered only `distilled:`, so the curation-gap ruling that
+  demoted telemetry to substrate applied to *injection* (W4.4) but not to
+  *distillation*. The predicate now lives once, in
+  `lunaris_core::sources::is_toolcall_capture`, with `lunaris-hook` delegating
+  to it rather than carrying a second copy.
+
+### Performance
+
+- **The SessionStart digest is cached per scope.** It cost 9–19 s against a
+  400 ms hook budget. Measured on the live store: cold 13.5 s, warm 10–16 ms.
+- **Dream candidates hydrate concurrently** instead of one at a time.
+
+### Added
+
+- **DREAM-01 is guarded in CI**: the dream-agenda planner is read-only, and a
+  test now fails if it ever writes.
+- An end-to-end composition test drives ingest → recall → activation ledger →
+  `build_dream_agenda`, so the three fixes above cannot silently decouple.
+
 ## [0.8.0] — 2026-08-27
 
 ### Upgrade notes — 0.7.1 → 0.8.0
