@@ -78,8 +78,8 @@ use std::fmt;
 
 /// Minimum Moon server version Lunaris supports.
 ///
-/// Tied to the `vendor/moon` submodule pin — currently tag **v0.8.5**
-/// (`ab4c393ea6280c6088200195d9f01e2c011f99f1`), the version this workspace's
+/// Tied to the `vendor/moon` submodule pin — currently tag **v0.8.7**
+/// (`c9e818f973b3b6d6ede3ee04d8ad63b40014959d`), the version this workspace's
 /// `moondb` SDK is built against. When the pin moves, move this with it only if
 /// the new pin brings a *required* server-side capability; a pin bump alone is
 /// not a reason to lock operators out of an older, still-sufficient server.
